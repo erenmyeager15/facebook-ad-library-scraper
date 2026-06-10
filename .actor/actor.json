@@ -93,7 +93,7 @@
             }
         }
     },
-    "input": "INPUT_SCHEMA.json",
-    "dockerfile": ".actor/Dockerfile",
+    "input": "../INPUT_SCHEMA.json",
+    "dockerfile": "Dockerfile",
     "webScraper": false
 }
