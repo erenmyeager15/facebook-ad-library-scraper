@@ -4,12 +4,12 @@ WORKDIR /usr/src/app
 
 COPY package*.json ./
 
-RUN npm install --include=dev
+RUN npm ci --include=dev
 
-COPY . .
+COPY . ./
 
-RUN npm run build
+RUN npm run build && npm prune --omit=dev --no-package-lock
 
-RUN npm prune --production
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
-CMD npm run start
+CMD ["node", "dist/main.js"]
