@@ -11,7 +11,7 @@
                 "ad-scraped": {
                     "eventTitle": "Ad scraped",
                     "eventDescription": "Charged once for each ad record successfully saved to the dataset.",
-                    "eventPriceUsd": 0.002,
+                    "eventPriceUsd": 0.001,
                     "isPrimaryEvent": true,
                     "isOneTimeEvent": false
                 }
