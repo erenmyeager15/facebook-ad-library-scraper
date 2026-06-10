@@ -1,0 +1,113 @@
+{
+    "title": "Facebook Ad Library Scraper — Extract Competitor Ads & Creatives",
+    "description": "Scrape ads from the public Facebook Ad Library. Extract ad creatives, text, headlines, spend ranges, impressions, targeting info, and more for any keyword, advertiser, or page ID.",
+    "type": "object",
+    "schemaVersion": 1,
+    "properties": {
+        "keywords": {
+            "title": "Search Keywords",
+            "description": "Search keywords to find ads in the Facebook Ad Library. Multiple keywords will be searched in sequence.",
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "editor": "requestListSources",
+            "default": []
+        },
+        "pageIds": {
+            "title": "Page IDs",
+            "description": "Facebook Page IDs to scrape ads for directly. Enter numeric Page IDs.",
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "editor": "requestListSources",
+            "default": []
+        },
+        "advertiserNames": {
+            "title": "Advertiser / Page Names",
+            "description": "Advertiser or Facebook Page names to search for in the Ad Library.",
+            "type": "array",
+            "items": {
+                "type": "string"
+            },
+            "editor": "requestListSources",
+            "default": []
+        },
+        "country": {
+            "title": "Country",
+            "description": "Filter ads by country. Use ISO 3166-1 alpha-2 code (e.g. US, GB, DE) or ALL for no filter.",
+            "type": "string",
+            "default": "ALL",
+            "editor": "textfield"
+        },
+        "adCategory": {
+            "title": "Ad Category",
+            "description": "Filter by ad category type.",
+            "type": "string",
+            "enum": [
+                "all",
+                "issues_elections_politics",
+                "housing",
+                "employment",
+                "credit",
+                "political"
+            ],
+            "default": "all",
+            "editor": "select"
+        },
+        "adStatus": {
+            "title": "Ad Status",
+            "description": "Filter by ad active/inactive status.",
+            "type": "string",
+            "enum": [
+                "active",
+                "inactive",
+                "all"
+            ],
+            "default": "active",
+            "editor": "select"
+        },
+        "platforms": {
+            "title": "Platforms",
+            "description": "Filter by platform where the ad is displayed.",
+            "type": "array",
+            "items": {
+                "type": "string",
+                "enum": [
+                    "facebook",
+                    "instagram",
+                    "messenger",
+                    "audience_network"
+                ]
+            },
+            "default": [
+                "facebook",
+                "instagram",
+                "messenger",
+                "audience_network"
+            ],
+            "editor": "list"
+        },
+        "maxResults": {
+            "title": "Max Results",
+            "description": "Maximum number of ads to scrape per search query. Set to 0 for unlimited (up to 1000).",
+            "type": "integer",
+            "default": 200,
+            "minimum": 0,
+            "maximum": 1000,
+            "editor": "number"
+        },
+        "proxyConfiguration": {
+            "title": "Proxy Configuration",
+            "description": "Proxy settings for the crawler. Residential proxies recommended.",
+            "type": "object",
+            "editor": "proxy",
+            "default": {
+                "useApifyProxy": true,
+                "apifyProxyGroups": ["RESIDENTIAL"]
+            }
+        }
+    },
+    "required": []
+}

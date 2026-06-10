@@ -1,0 +1,23 @@
+{
+    "name": "facebook-ad-library-scraper",
+    "version": "1.0.0",
+    "type": "module",
+    "description": "Apify Actor that scrapes the public Facebook Ad Library for ad intelligence",
+    "engines": {
+        "node": ">=20"
+    },
+    "main": "dist/main.js",
+    "scripts": {
+        "build": "tsc",
+        "start": "node dist/main.js",
+        "dev": "tsc && node dist/main.js"
+    },
+    "dependencies": {
+        "apify": "^3.2.0",
+        "crawlee": "^3.11.0",
+        "playwright": "^1.60.0"
+    },
+    "devDependencies": {
+        "typescript": "^5.5.0"
+    }
+}

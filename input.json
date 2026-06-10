@@ -1,0 +1,13 @@
+{
+    "keywords": ["Nike"],
+    "pageIds": [],
+    "advertiserNames": [],
+    "country": "US",
+    "adCategory": "all",
+    "adStatus": "active",
+    "platforms": ["facebook", "instagram", "messenger", "audience_network"],
+    "maxResults": 20,
+    "proxyConfiguration": {
+        "useApifyProxy": true
+    }
+}

@@ -1,0 +1,99 @@
+{
+    "actorSpecification": 1,
+    "name": "facebook-ad-library-scraper",
+    "title": "Facebook Ad Library Scraper — Extract Competitor Ads & Creatives",
+    "description": "Scrape ads from the public Facebook Ad Library. Extract ad creatives, text, headlines, spend ranges, impressions, targeting info, and more.",
+    "version": "1.0.0",
+    "pricingInfo": {
+        "pricingModel": "PAY_PER_EVENT",
+        "pricingPerEvent": {
+            "actorChargeEvents": {
+                "ad-scraped": {
+                    "eventTitle": "Ad scraped",
+                    "eventDescription": "Charged once for each ad record successfully saved to the dataset.",
+                    "eventPriceUsd": 0.002,
+                    "isPrimaryEvent": true,
+                    "isOneTimeEvent": false
+                }
+            }
+        }
+    },
+    "categories": ["MARKETING", "LEAD_GENERATION", "SOCIAL_MEDIA"],
+    "minMemoryMbytes": 2048,
+    "maxMemoryMbytes": 8192,
+    "defaultRunOptions": {
+        "memoryMbytes": 4096,
+        "timeoutSecs": 43200
+    },
+    "storages": {
+        "dataset": {
+            "actorSpecification": 1,
+            "views": {
+                "ads": {
+                    "title": "Scraped Ads",
+                    "transformation": {
+                        "fields": [
+                            "adId",
+                            "advertiserPageName",
+                            "advertiserPageId",
+                            "adCreativeText",
+                            "adHeadline",
+                            "adDescription",
+                            "adType",
+                            "impressionsRange",
+                            "spendRange",
+                            "adStartDate",
+                            "adEndDate",
+                            "searchQuery",
+                            "scrapedAt"
+                        ]
+                    },
+                    "display": {
+                        "component": "table",
+                        "properties": {
+                            "adId": {
+                                "label": "Ad ID",
+                                "format": "text"
+                            },
+                            "advertiserPageName": {
+                                "label": "Advertiser",
+                                "format": "text"
+                            },
+                            "adCreativeText": {
+                                "label": "Ad Text",
+                                "format": "text"
+                            },
+                            "adHeadline": {
+                                "label": "Headline",
+                                "format": "text"
+                            },
+                            "adType": {
+                                "label": "Type",
+                                "format": "text"
+                            },
+                            "impressionsRange": {
+                                "label": "Impressions",
+                                "format": "text"
+                            },
+                            "spendRange": {
+                                "label": "Spend",
+                                "format": "text"
+                            },
+                            "adStartDate": {
+                                "label": "Started",
+                                "format": "text"
+                            },
+                            "searchQuery": {
+                                "label": "Search",
+                                "format": "text"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "input": "INPUT_SCHEMA.json",
+    "dockerfile": ".actor/Dockerfile",
+    "webScraper": false
+}
