@@ -3,7 +3,7 @@
     "name": "facebook-ad-library-scraper",
     "title": "Facebook Ad Library Scraper — Extract Competitor Ads & Creatives",
     "description": "Scrape ads from the public Facebook Ad Library. Extract ad creatives, text, headlines, spend ranges, impressions, targeting info, and more.",
-    "version": "1.0.0",
+    "version": "1.0",
     "pricingInfo": {
         "pricingModel": "PAY_PER_EVENT",
         "pricingPerEvent": {
