@@ -1,5 +1,5 @@
 {
-    "title": "Facebook Ad Library Scraper — Extract Competitor Ads & Creatives",
+    "title": "Facebook Ad Library Scraper - Competitor Ads & Creatives",
     "description": "Scrape ads from the public Facebook Ad Library. Extract ad creatives, text, headlines, spend ranges, impressions, targeting info, and more for any keyword, advertiser, or page ID.",
     "type": "object",
     "schemaVersion": 1,
@@ -11,7 +11,7 @@
             "items": {
                 "type": "string"
             },
-            "editor": "requestListSources",
+            "editor": "stringList",
             "default": []
         },
         "pageIds": {
@@ -21,7 +21,7 @@
             "items": {
                 "type": "string"
             },
-            "editor": "requestListSources",
+            "editor": "stringList",
             "default": []
         },
         "advertiserNames": {
@@ -31,7 +31,7 @@
             "items": {
                 "type": "string"
             },
-            "editor": "requestListSources",
+            "editor": "stringList",
             "default": []
         },
         "country": {
@@ -87,7 +87,7 @@
                 "messenger",
                 "audience_network"
             ],
-            "editor": "list"
+            "editor": "select"
         },
         "maxResults": {
             "title": "Max Results",
