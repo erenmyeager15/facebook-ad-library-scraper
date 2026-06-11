@@ -455,6 +455,14 @@ async function extractAdCards(
             .filter((url) => !url.startsWith('data:') && !/emoji|static.xx.fbcdn.net\/rsrc/i.test(url))
             .sort((a, b) => imageQualityScore(b) - imageQualityScore(a))
             .slice(0, 10);
+        // Creative images only: drop the advertiser avatar/logo and other tiny thumbnails
+        // (e.g. sNNxNN where a dimension is < 200) so ad-type detection isn't skewed.
+        const creativeImages = imageUrls.filter((url) => {
+            const m = url.match(/s(\d+)x(\d+)/i);
+            if (!m) return true;
+            return Number(m[1]) >= 200 && Number(m[2]) >= 200;
+        });
+        const effectiveImages = creativeImages.length ? creativeImages : imageUrls;
         const videoUrl = candidate.videoUrls.map((url) => normalizeFacebookUrl(url) ?? url).find(Boolean) ?? null;
         const videoThumbnailUrl = candidate.videoThumbnailUrls
             .map((url) => normalizeFacebookUrl(url) ?? url)
@@ -463,9 +471,9 @@ async function extractAdCards(
         let adType: string | null = 'text';
         if (videoUrl || videoThumbnailUrl) {
             adType = 'video';
-        } else if (imageUrls.length > 1) {
+        } else if (creativeImages.length > 1) {
             adType = 'carousel';
-        } else if (imageUrls.length === 1) {
+        } else if (effectiveImages.length >= 1) {
             adType = 'image';
         }
 
@@ -500,8 +508,8 @@ async function extractAdCards(
             ctaButtonText,
             destinationUrl,
             adType,
-            imageUrl: imageUrls[0] ?? null,
-            imageUrls,
+            imageUrl: effectiveImages[0] ?? null,
+            imageUrls: effectiveImages,
             videoThumbnailUrl,
             videoUrl,
             adStartDate,
