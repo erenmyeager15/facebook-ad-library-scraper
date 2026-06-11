@@ -96,10 +96,10 @@ Enter search keywords, advertiser names, or Facebook Page IDs, and this Actor wi
 
 | Metric | Cost |
 |--------|------|
-| **Per ad scraped** | $0.002 |
-| **100 ads** | $0.20 |
-| **1,000 ads** | $2.00 |
-| **10,000 ads** | $20.00 |
+| **Per ad scraped** | $0.001 |
+| **100 ads** | $0.10 |
+| **1,000 ads** | $1.00 |
+| **10,000 ads** | $10.00 |
 
 Pay-per-use pricing via Apify's Pay Per Event system. Only charged for successfully extracted ads.
 

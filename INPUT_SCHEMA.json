@@ -12,7 +12,7 @@
                 "type": "string"
             },
             "editor": "stringList",
-            "default": []
+            "default": ["Nike"]
         },
         "pageIds": {
             "title": "Page IDs",
@@ -93,7 +93,7 @@
             "title": "Max Results",
             "description": "Maximum number of ads to scrape per search query. Set to 0 for unlimited (up to 1000).",
             "type": "integer",
-            "default": 200,
+            "default": 20,
             "minimum": 0,
             "maximum": 1000,
             "editor": "number"

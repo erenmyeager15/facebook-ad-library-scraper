@@ -56,5 +56,5 @@ export const DEFAULT_INPUT: Required<Omit<ActorInput, 'proxyConfiguration'>> & {
     adCategory: 'all',
     adStatus: 'active',
     platforms: ['facebook', 'instagram', 'messenger', 'audience_network'],
-    maxResults: 200,
+    maxResults: 20,
 };
