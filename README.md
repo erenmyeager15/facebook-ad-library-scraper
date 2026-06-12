@@ -143,6 +143,12 @@ This Actor uses Apify Pay Per Event pricing. You pay only for ad records success
 
 This Actor scrapes **public data only** from Facebook's Ad Library, a transparency tool Meta provides for public-interest research and ad transparency. No Facebook login or authentication is used and no personal data is collected. You are responsible for complying with Meta's terms, privacy laws, GDPR, and local regulations wherever you use the data.
 
+## Responsible Use
+
+This Actor is intended for lawful collection of publicly available information only. Users are responsible for ensuring their use complies with the source website's terms, robots.txt, applicable privacy laws, including India's DPDP Act, and all local regulations.
+
+Do not use this Actor to collect, store, sell, or misuse personal data without a lawful basis. The Actor author is not responsible for misuse by end users.
+
 ## License
 
 Apache-2.0. See `LICENSE`.
