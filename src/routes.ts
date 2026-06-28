@@ -1,5 +1,5 @@
 import { Router, PlaywrightCrawlingContext } from 'crawlee';
-import { Dataset, log } from 'crawlee';
+import { log } from 'crawlee';
 import { Actor } from 'apify';
 import { AdRecord } from './types.js';
 
@@ -808,7 +808,7 @@ async function scrollToLoadMore(
 
 export function createRouter(
     seenAdIds: Set<string>,
-    counters: { totalScraped: number; maxTotal: number },
+    counters: { totalScraped: number; maxPerQuery: number; stopped: boolean },
     input: { platforms: string[] }
 ) {
     const router = Router.create<PlaywrightCrawlingContext>();
@@ -816,8 +816,8 @@ export function createRouter(
     const searchHandler = async ({ request, page }: PlaywrightCrawlingContext): Promise<void> => {
         const keyword = request.userData.keyword as string;
 
-        if (counters.totalScraped >= counters.maxTotal) {
-            log.info('Max results reached, skipping', { keyword });
+        if (counters.stopped) {
+            log.info('Scraping already stopped by the spending limit or a billing error; skipping', { keyword });
             return;
         }
 
@@ -831,11 +831,12 @@ export function createRouter(
         await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
         await sleep(randomDelay());
 
-        let previousCount = counters.totalScraped;
+        let queryScraped = 0;
+        let previousCount = queryScraped;
         let staleRounds = 0;
         const maxStaleRounds = 5;
 
-        while (counters.totalScraped < counters.maxTotal && staleRounds < maxStaleRounds) {
+        while (!counters.stopped && queryScraped < counters.maxPerQuery && staleRounds < maxStaleRounds) {
             const records = await extractAdCards(page, keyword, seenAdIds, input);
             log.info('Extracted records from current viewport', {
                 keyword,
@@ -844,20 +845,29 @@ export function createRouter(
             });
 
             for (const record of records) {
-                if (counters.totalScraped >= counters.maxTotal) break;
-
-                await Dataset.pushData(record);
-                counters.totalScraped++;
+                if (counters.stopped || queryScraped >= counters.maxPerQuery) break;
 
                 try {
-                    const chargeResult = await Actor.charge({ eventName: 'ad-scraped' });
+                    // Push and charge together so records beyond the user's charge limit
+                    // are not written to the dataset or scraped without revenue.
+                    const chargeResult = await Actor.pushData(record, 'ad-scraped');
+                    const recordWasSaved = chargeResult.chargedCount > 0 || !chargeResult.eventChargeLimitReached;
+                    if (recordWasSaved) {
+                        counters.totalScraped += 1;
+                        queryScraped += 1;
+                    }
+
                     if (chargeResult?.eventChargeLimitReached) {
                         log.info('Charge budget limit reached, stopping.', { totalScraped: counters.totalScraped });
-                        counters.totalScraped = counters.maxTotal;
+                        counters.stopped = true;
                         break;
                     }
                 } catch (chargeErr) {
-                    log.warning('PPE charge failed', { error: String(chargeErr) });
+                    log.error('Unable to save and charge for ad; stopping to prevent unbilled work.', {
+                        error: String(chargeErr),
+                    });
+                    counters.stopped = true;
+                    break;
                 }
 
                 if (counters.totalScraped % 50 === 0) {
@@ -865,22 +875,22 @@ export function createRouter(
                 }
             }
 
-            if (counters.totalScraped === previousCount) {
+            if (queryScraped === previousCount) {
                 staleRounds++;
             } else {
                 staleRounds = 0;
             }
-            previousCount = counters.totalScraped;
+            previousCount = queryScraped;
 
-            if (counters.totalScraped < counters.maxTotal) {
-                const scrolled = await scrollToLoadMore(page, counters.totalScraped, counters.maxTotal);
+            if (!counters.stopped && queryScraped < counters.maxPerQuery) {
+                const scrolled = await scrollToLoadMore(page, queryScraped, counters.maxPerQuery);
                 if (!scrolled && staleRounds > 0) {
                     break;
                 }
             }
         }
 
-        log.info('Finished page', { keyword, scraped: counters.totalScraped });
+        log.info('Finished page', { keyword, queryScraped, totalScraped: counters.totalScraped });
     };
 
     router.addHandler('search', searchHandler);

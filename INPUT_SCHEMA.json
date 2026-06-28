@@ -1,12 +1,12 @@
 {
     "title": "Facebook Ad Library Scraper - Competitor Ads & Creatives",
-    "description": "Scrape ads from the public Facebook Ad Library. Extract ad creatives, text, headlines, spend ranges, impressions, targeting info, and more for any keyword, advertiser, or page ID.",
+    "description": "Scrape ads from the public Facebook Ad Library. For a low-cost test, use one keyword or Page ID, one country, active ads, maxResults 5-10, and residential proxy.",
     "type": "object",
     "schemaVersion": 1,
     "properties": {
         "keywords": {
             "title": "Search Keywords",
-            "description": "Search keywords to find ads in the Facebook Ad Library. Multiple keywords will be searched in sequence.",
+            "description": "Search keywords to find ads in the Facebook Ad Library. Start with one keyword for a low-cost test. Multiple keywords will be searched in sequence.",
             "type": "array",
             "items": {
                 "type": "string"
@@ -16,7 +16,7 @@
         },
         "pageIds": {
             "title": "Page IDs",
-            "description": "Facebook Page IDs to scrape ads for directly. Enter numeric Page IDs.",
+            "description": "Facebook Page IDs to scrape ads for directly. Enter numeric Page IDs. Start with one Page ID for a controlled test.",
             "type": "array",
             "items": {
                 "type": "string"
@@ -26,7 +26,7 @@
         },
         "advertiserNames": {
             "title": "Advertiser / Page Names",
-            "description": "Advertiser or Facebook Page names to search for in the Ad Library.",
+            "description": "Advertiser or Facebook Page names to search for in the Ad Library. Start with one advertiser name for a controlled test.",
             "type": "array",
             "items": {
                 "type": "string"
@@ -36,9 +36,9 @@
         },
         "country": {
             "title": "Country",
-            "description": "Filter ads by country. Use ISO 3166-1 alpha-2 code (e.g. US, GB, DE) or ALL for no filter.",
+            "description": "Filter ads by country. Use one ISO 3166-1 alpha-2 code (e.g. US, GB, DE) for tests. ALL can expand results and usage.",
             "type": "string",
-            "default": "ALL",
+            "default": "US",
             "editor": "textfield"
         },
         "adCategory": {
@@ -58,7 +58,7 @@
         },
         "adStatus": {
             "title": "Ad Status",
-            "description": "Filter by ad active/inactive status.",
+            "description": "Filter by ad active/inactive status. Active is recommended for low-cost competitor checks.",
             "type": "string",
             "enum": [
                 "active",
@@ -91,16 +91,16 @@
         },
         "maxResults": {
             "title": "Max Results",
-            "description": "Maximum number of ads to scrape per search query. Set to 0 for unlimited (up to 1000).",
+            "description": "Maximum number of ads to scrape per search query. Use 5-10 for test runs; increase only after output looks correct.",
             "type": "integer",
-            "default": 20,
+            "default": 10,
             "minimum": 0,
             "maximum": 1000,
             "editor": "number"
         },
         "proxyConfiguration": {
             "title": "Proxy Configuration",
-            "description": "Proxy settings for the crawler. Residential proxies recommended.",
+            "description": "Proxy settings for the crawler. Residential proxies are recommended and billed as platform usage.",
             "type": "object",
             "editor": "proxy",
             "default": {

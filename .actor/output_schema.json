@@ -1,0 +1,14 @@
+{
+  "actorOutputSchemaVersion": 1,
+  "title": "Facebook Ad Library Scraper Output",
+  "description": "Structured public Facebook Ad Library records with ad IDs, advertiser page data, creative text, headlines, descriptions, calls to action, destination URLs, media URLs, dates, impression and spend ranges, countries, platforms, funding text, targeting summary, library URLs, search queries, and scraped timestamps.",
+  "type": "object",
+  "properties": {
+    "results": {
+      "type": "string",
+      "title": "Facebook Ad Library records",
+      "description": "Clean dataset items containing public ad creative, advertiser, date, country, platform, media, spend, impression, targeting summary, and URL data.",
+      "template": "{{links.apiDefaultDatasetUrl}}/items"
+    }
+  }
+}

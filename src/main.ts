@@ -37,6 +37,9 @@ function buildSearchUrl(keyword: string, input: Required<ActorInput>, pageId?: s
         if (catCode) params.set('category', catCode);
     }
 
+    input.platforms.forEach((platform, index) => {
+        params.set(`publisher_platforms[${index}]`, platform);
+    });
     params.set('media_type', 'all');
 
     // NOTE: real Ad Library URL requires the trailing slash after /library/
@@ -115,8 +118,8 @@ Actor.main(async () => {
     log.info('Built search URLs', { count: urls.length });
 
     const seenAdIds = new Set<string>();
-    const maxTotal = input.maxResults || 1000;
-    const counters = { totalScraped: 0, maxTotal };
+    const maxPerQuery = input.maxResults || 1000;
+    const counters = { totalScraped: 0, maxPerQuery, stopped: false };
 
     const router = createRouter(seenAdIds, counters, { platforms: input.platforms });
 
@@ -126,7 +129,8 @@ Actor.main(async () => {
         navigationTimeoutSecs: 90,
         requestHandlerTimeoutSecs: 300,
         retryOnBlocked: true,
-        maxRequestRetries: 5,
+        maxRequestRetries: 3,
+        maxSessionRotations: 3,
         sessionPoolOptions: {
             maxPoolSize: 20,
             sessionOptions: {

@@ -52,9 +52,9 @@ export const DEFAULT_INPUT: Required<Omit<ActorInput, 'proxyConfiguration'>> & {
     keywords: [],
     pageIds: [],
     advertiserNames: [],
-    country: 'ALL',
+    country: 'US',
     adCategory: 'all',
     adStatus: 'active',
     platforms: ['facebook', 'instagram', 'messenger', 'audience_network'],
-    maxResults: 20,
+    maxResults: 10,
 };

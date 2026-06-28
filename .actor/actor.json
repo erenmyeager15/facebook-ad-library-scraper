@@ -4,10 +4,19 @@
     "title": "Facebook Ad Library Scraper - Competitor Ads & Creatives",
     "description": "Scrape ads from the public Facebook Ad Library. Extract ad creatives, text, headlines, spend ranges, impressions, targeting info, and more.",
     "version": "1.0",
+    "readme": "../README.md",
+    "output": "./output_schema.json",
     "pricingInfo": {
         "pricingModel": "PAY_PER_EVENT",
         "pricingPerEvent": {
             "actorChargeEvents": {
+                "apify-actor-start": {
+                    "eventTitle": "Actor start",
+                    "eventDescription": "Charged when the run starts to cover browser startup and the residential proxy session. Number of events depends on memory (one per GB, minimum one).",
+                    "eventPriceUsd": 0.001,
+                    "isPrimaryEvent": false,
+                    "isOneTimeEvent": true
+                },
                 "ad-scraped": {
                     "eventTitle": "Ad scraped",
                     "eventDescription": "Charged once for each ad record successfully saved to the dataset.",
@@ -23,8 +32,8 @@
     "maxMemoryMbytes": 8192,
     "defaultRunOptions": {
         "build": "latest",
-        "memoryMbytes": 4096,
-        "timeoutSecs": 43200
+        "memoryMbytes": 2048,
+        "timeoutSecs": 3600
     },
     "storages": {
         "dataset": {
