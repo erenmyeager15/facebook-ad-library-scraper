@@ -1,113 +1,95 @@
 {
-    "title": "Facebook Ad Library Scraper - Competitor Ads & Creatives",
-    "description": "Scrape ads from the public Facebook Ad Library. For a low-cost test, use one keyword or Page ID, one country, active ads, maxResults 5-10, and residential proxy.",
-    "type": "object",
-    "schemaVersion": 1,
-    "properties": {
-        "keywords": {
-            "title": "Search Keywords",
-            "description": "Search keywords to find ads in the Facebook Ad Library. Start with one keyword for a low-cost test. Multiple keywords will be searched in sequence.",
-            "type": "array",
-            "items": {
-                "type": "string"
-            },
-            "editor": "stringList",
-            "default": ["Nike"]
-        },
-        "pageIds": {
-            "title": "Page IDs",
-            "description": "Facebook Page IDs to scrape ads for directly. Enter numeric Page IDs. Start with one Page ID for a controlled test.",
-            "type": "array",
-            "items": {
-                "type": "string"
-            },
-            "editor": "stringList",
-            "default": []
-        },
-        "advertiserNames": {
-            "title": "Advertiser / Page Names",
-            "description": "Advertiser or Facebook Page names to search for in the Ad Library. Start with one advertiser name for a controlled test.",
-            "type": "array",
-            "items": {
-                "type": "string"
-            },
-            "editor": "stringList",
-            "default": []
-        },
-        "country": {
-            "title": "Country",
-            "description": "Filter ads by country. Use one ISO 3166-1 alpha-2 code (e.g. US, GB, DE) for tests. ALL can expand results and usage.",
-            "type": "string",
-            "default": "US",
-            "editor": "textfield"
-        },
-        "adCategory": {
-            "title": "Ad Category",
-            "description": "Filter by ad category type.",
-            "type": "string",
-            "enum": [
-                "all",
-                "issues_elections_politics",
-                "housing",
-                "employment",
-                "credit",
-                "political"
-            ],
-            "default": "all",
-            "editor": "select"
-        },
-        "adStatus": {
-            "title": "Ad Status",
-            "description": "Filter by ad active/inactive status. Active is recommended for low-cost competitor checks.",
-            "type": "string",
-            "enum": [
-                "active",
-                "inactive",
-                "all"
-            ],
-            "default": "active",
-            "editor": "select"
-        },
-        "platforms": {
-            "title": "Platforms",
-            "description": "Filter by platform where the ad is displayed.",
-            "type": "array",
-            "items": {
-                "type": "string",
-                "enum": [
-                    "facebook",
-                    "instagram",
-                    "messenger",
-                    "audience_network"
-                ]
-            },
-            "default": [
-                "facebook",
-                "instagram",
-                "messenger",
-                "audience_network"
-            ],
-            "editor": "select"
-        },
-        "maxResults": {
-            "title": "Max Results",
-            "description": "Maximum number of ads to scrape per search query. Use 5-10 for test runs; increase only after output looks correct.",
-            "type": "integer",
-            "default": 10,
-            "minimum": 0,
-            "maximum": 1000,
-            "editor": "number"
-        },
-        "proxyConfiguration": {
-            "title": "Proxy Configuration",
-            "description": "Proxy settings for the crawler. Residential proxies are recommended and billed as platform usage.",
-            "type": "object",
-            "editor": "proxy",
-            "default": {
-                "useApifyProxy": true,
-                "apifyProxyGroups": ["RESIDENTIAL"]
-            }
-        }
+  "title": "Facebook Ad Library Scraper Input",
+  "description": "Low-cost sample: search active Nike ads in the US, save 1 result, and use Residential proxy. Increase max results only after the sample output looks right.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "keywords": {
+      "title": "Search keywords",
+      "description": "Search keywords to find public ads in the Facebook Ad Library. Start with one keyword. Up to 5 keywords per run.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "editor": "stringList",
+      "default": ["Nike"],
+      "maxItems": 5
     },
-    "required": []
+    "pageIds": {
+      "title": "Page IDs",
+      "description": "Numeric Facebook Page IDs to scrape directly. Use one Page ID for a controlled test. Up to 5 Page IDs per run.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "editor": "stringList",
+      "default": [],
+      "maxItems": 5
+    },
+    "advertiserNames": {
+      "title": "Advertiser or page names",
+      "description": "Advertiser or Facebook Page names to search in the public Ad Library. Up to 5 names per run.",
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "editor": "stringList",
+      "default": [],
+      "maxItems": 5
+    },
+    "country": {
+      "title": "Country",
+      "description": "Country filter. Use a two-letter ISO code such as US, GB, DE, IN, or ALL.",
+      "type": "string",
+      "default": "US",
+      "editor": "textfield"
+    },
+    "adCategory": {
+      "title": "Ad category",
+      "description": "Filter by Meta Ad Library category.",
+      "type": "string",
+      "enum": ["all", "issues_elections_politics", "housing", "employment", "credit", "political"],
+      "default": "all",
+      "editor": "select"
+    },
+    "adStatus": {
+      "title": "Ad status",
+      "description": "Filter by active or inactive ads. Active is recommended for the first run.",
+      "type": "string",
+      "enum": ["active", "inactive", "all"],
+      "default": "active",
+      "editor": "select"
+    },
+    "platforms": {
+      "title": "Platforms",
+      "description": "Platforms where the ad is displayed. Keep Facebook and Instagram for the first run.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["facebook", "instagram", "messenger", "audience_network"]
+      },
+      "default": ["facebook", "instagram"],
+      "editor": "select"
+    },
+    "maxResults": {
+      "title": "Max results",
+      "description": "Maximum number of ads to save per search query. Start with 1 for a low-cost test. The actor supports up to 1000 ads per query.",
+      "type": "integer",
+      "default": 1,
+      "minimum": 1,
+      "maximum": 1000,
+      "editor": "number"
+    },
+    "proxyConfiguration": {
+      "title": "Proxy configuration",
+      "description": "Proxy settings for the crawler. Residential proxy is recommended for Facebook Ad Library reliability.",
+      "type": "object",
+      "editor": "proxy",
+      "default": {
+        "useApifyProxy": true,
+        "apifyProxyGroups": ["RESIDENTIAL"]
+      }
+    }
+  },
+  "required": []
 }

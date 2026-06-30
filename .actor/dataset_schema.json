@@ -1,0 +1,75 @@
+{
+  "actorSpecification": 1,
+  "views": {
+    "ads": {
+      "title": "Scraped Ads",
+      "transformation": {
+        "fields": [
+          "imageUrl",
+          "adId",
+          "advertiserPageName",
+          "advertiserPageId",
+          "adCreativeText",
+          "adHeadline",
+          "adType",
+          "impressionsRange",
+          "spendRange",
+          "adStartDate",
+          "adEndDate",
+          "searchQuery",
+          "adLibraryUrl",
+          "scrapedAt"
+        ]
+      },
+      "display": {
+        "component": "table",
+        "properties": {
+          "imageUrl": {
+            "label": "Image",
+            "format": "image"
+          },
+          "adId": {
+            "label": "Ad ID"
+          },
+          "advertiserPageName": {
+            "label": "Advertiser"
+          },
+          "advertiserPageId": {
+            "label": "Page ID"
+          },
+          "adCreativeText": {
+            "label": "Ad Text"
+          },
+          "adHeadline": {
+            "label": "Headline"
+          },
+          "adType": {
+            "label": "Type"
+          },
+          "impressionsRange": {
+            "label": "Impressions"
+          },
+          "spendRange": {
+            "label": "Spend"
+          },
+          "adStartDate": {
+            "label": "Started"
+          },
+          "adEndDate": {
+            "label": "Ended"
+          },
+          "searchQuery": {
+            "label": "Search"
+          },
+          "adLibraryUrl": {
+            "label": "Ad Library URL",
+            "format": "link"
+          },
+          "scrapedAt": {
+            "label": "Scraped At"
+          }
+        }
+      }
+    }
+  }
+}

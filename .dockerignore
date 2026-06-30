@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.git/
+.apify/
+storage/
+*.log
+.env
+test_input.json

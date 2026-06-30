@@ -1,6 +1,7 @@
 {
   "keywords": ["Nike"],
   "country": "US",
-  "maxResults": 10,
+  "platforms": ["facebook", "instagram"],
+  "maxResults": 1,
   "proxyConfiguration": { "useApifyProxy": true, "apifyProxyGroups": ["RESIDENTIAL"] }
 }

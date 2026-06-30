@@ -49,12 +49,16 @@ export interface AdRecord {
 }
 
 export const DEFAULT_INPUT: Required<Omit<ActorInput, 'proxyConfiguration'>> & { proxyConfiguration?: ActorInput['proxyConfiguration'] } = {
-    keywords: [],
+    keywords: ['Nike'],
     pageIds: [],
     advertiserNames: [],
     country: 'US',
     adCategory: 'all',
     adStatus: 'active',
-    platforms: ['facebook', 'instagram', 'messenger', 'audience_network'],
-    maxResults: 10,
+    platforms: ['facebook', 'instagram'],
+    maxResults: 1,
+    proxyConfiguration: {
+        useApifyProxy: true,
+        apifyProxyGroups: ['RESIDENTIAL'],
+    },
 };

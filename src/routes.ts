@@ -1,6 +1,7 @@
 import { Router, PlaywrightCrawlingContext } from 'crawlee';
 import { log } from 'crawlee';
 import { Actor } from 'apify';
+import { wasPushedRecordSaved } from './billing.js';
 import { AdRecord } from './types.js';
 
 interface RawAdLink {
@@ -76,7 +77,7 @@ function imageQualityScore(url: string): number {
     return 1_000_000;
 }
 
-function extractAdId(url: string): string | null {
+export function extractAdId(url: string): string | null {
     const queryMatch = url.match(/[?&]id=(\d{5,})/);
     if (queryMatch) return queryMatch[1];
 
@@ -89,7 +90,7 @@ function extractAdIdFromText(text: string): string | null {
     return match ? match[1] : null;
 }
 
-function normalizeFacebookUrl(href: string | null | undefined): string | null {
+export function normalizeFacebookUrl(href: string | null | undefined): string | null {
     if (!href) return null;
 
     let url = href.trim();
@@ -108,7 +109,7 @@ function normalizeFacebookUrl(href: string | null | undefined): string | null {
     return `https://www.facebook.com/${url}`;
 }
 
-function parsePageIdFromUrl(url: string | null): string | null {
+export function parsePageIdFromUrl(url: string | null): string | null {
     if (!url) return null;
     const pageMatch = url.match(/[?&](?:page_id|view_all_page_id)=(\d{5,})/);
     if (pageMatch) return pageMatch[1];
@@ -808,7 +809,13 @@ async function scrollToLoadMore(
 
 export function createRouter(
     seenAdIds: Set<string>,
-    counters: { totalScraped: number; maxPerQuery: number; stopped: boolean },
+    counters: {
+        totalScraped: number;
+        maxPerQuery: number;
+        stopped: boolean;
+        spendingLimitReached: boolean;
+        saveErrorMessage: string | null;
+    },
     input: { platforms: string[] }
 ) {
     const router = Router.create<PlaywrightCrawlingContext>();
@@ -851,7 +858,7 @@ export function createRouter(
                     // Push and charge together so records beyond the user's charge limit
                     // are not written to the dataset or scraped without revenue.
                     const chargeResult = await Actor.pushData(record, 'ad-scraped');
-                    const recordWasSaved = chargeResult.chargedCount > 0 || !chargeResult.eventChargeLimitReached;
+                    const recordWasSaved = wasPushedRecordSaved(chargeResult);
                     if (recordWasSaved) {
                         counters.totalScraped += 1;
                         queryScraped += 1;
@@ -859,6 +866,7 @@ export function createRouter(
 
                     if (chargeResult?.eventChargeLimitReached) {
                         log.info('Charge budget limit reached, stopping.', { totalScraped: counters.totalScraped });
+                        counters.spendingLimitReached = true;
                         counters.stopped = true;
                         break;
                     }
@@ -866,6 +874,7 @@ export function createRouter(
                     log.error('Unable to save and charge for ad; stopping to prevent unbilled work.', {
                         error: String(chargeErr),
                     });
+                    counters.saveErrorMessage = `Unable to save and charge for Facebook ad: ${String(chargeErr)}`;
                     counters.stopped = true;
                     break;
                 }

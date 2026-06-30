@@ -1,109 +1,47 @@
 {
-    "actorSpecification": 1,
-    "name": "facebook-ad-library-scraper",
-    "title": "Facebook Ad Library Scraper - Competitor Ads & Creatives",
-    "description": "Scrape ads from the public Facebook Ad Library. Extract ad creatives, text, headlines, spend ranges, impressions, targeting info, and more.",
-    "version": "1.0",
-    "readme": "../README.md",
-    "output": "./output_schema.json",
-    "pricingInfo": {
-        "pricingModel": "PAY_PER_EVENT",
-        "pricingPerEvent": {
-            "actorChargeEvents": {
-                "apify-actor-start": {
-                    "eventTitle": "Actor start",
-                    "eventDescription": "Charged when the run starts to cover browser startup and the residential proxy session. Number of events depends on memory (one per GB, minimum one).",
-                    "eventPriceUsd": 0.001,
-                    "isPrimaryEvent": false,
-                    "isOneTimeEvent": true
-                },
-                "ad-scraped": {
-                    "eventTitle": "Ad scraped",
-                    "eventDescription": "Charged once for each ad record successfully saved to the dataset.",
-                    "eventPriceUsd": 0.001,
-                    "isPrimaryEvent": true,
-                    "isOneTimeEvent": false
-                }
-            }
+  "actorSpecification": 1,
+  "name": "facebook-ad-library-scraper",
+  "title": "Facebook Ad Library Scraper - Competitor Ads & Creatives",
+  "description": "Scrape public Facebook Ad Library ads with creative text, headlines, media URLs, run dates, spend ranges, impressions, and advertiser page data.",
+  "version": "1.0",
+  "readme": "../README.md",
+  "input": "../INPUT_SCHEMA.json",
+  "output": "./output_schema.json",
+  "storages": {
+    "dataset": "./dataset_schema.json"
+  },
+  "dockerfile": "Dockerfile",
+  "webScraper": false,
+  "categories": ["SOCIAL_MEDIA", "OTHER"],
+  "categoriesVersion": "1.0.0",
+  "defaultRunOptions": {
+    "build": "latest",
+    "memoryMbytes": 4096,
+    "timeoutSecs": 3600
+  },
+  "exampleRunInput": {
+    "body": "{\"keywords\":[\"Nike\"],\"pageIds\":[],\"advertiserNames\":[],\"country\":\"US\",\"adCategory\":\"all\",\"adStatus\":\"active\",\"platforms\":[\"facebook\",\"instagram\"],\"maxResults\":1,\"proxyConfiguration\":{\"useApifyProxy\":true,\"apifyProxyGroups\":[\"RESIDENTIAL\"]}}",
+    "contentType": "application/json; charset=utf-8"
+  },
+  "pricingInfo": {
+    "pricingModel": "PAY_PER_EVENT",
+    "pricingPerEvent": {
+      "actorChargeEvents": {
+        "apify-actor-start": {
+          "eventTitle": "Actor Start",
+          "eventDescription": "Charged when the Actor starts running. Number of events charged depends on Actor memory (one event per GB, minimum one event).",
+          "eventPriceUsd": 0.00005,
+          "isPrimaryEvent": false,
+          "isOneTimeEvent": true
+        },
+        "ad-scraped": {
+          "eventTitle": "Ad scraped",
+          "eventDescription": "Charged once for each ad record successfully saved to the dataset.",
+          "eventPriceUsd": 0.001,
+          "isPrimaryEvent": true,
+          "isOneTimeEvent": false
         }
-    },
-    "categories": ["MARKETING", "SOCIAL_MEDIA"],
-    "minMemoryMbytes": 2048,
-    "maxMemoryMbytes": 8192,
-    "defaultRunOptions": {
-        "build": "latest",
-        "memoryMbytes": 2048,
-        "timeoutSecs": 3600
-    },
-    "storages": {
-        "dataset": {
-            "actorSpecification": 1,
-            "views": {
-                "ads": {
-                    "title": "Scraped Ads",
-                    "transformation": {
-                        "fields": [
-                            "adId",
-                            "advertiserPageName",
-                            "advertiserPageId",
-                            "adCreativeText",
-                            "adHeadline",
-                            "adDescription",
-                            "adType",
-                            "impressionsRange",
-                            "spendRange",
-                            "adStartDate",
-                            "adEndDate",
-                            "searchQuery",
-                            "scrapedAt"
-                        ]
-                    },
-                    "display": {
-                        "component": "table",
-                        "properties": {
-                            "adId": {
-                                "label": "Ad ID",
-                                "format": "text"
-                            },
-                            "advertiserPageName": {
-                                "label": "Advertiser",
-                                "format": "text"
-                            },
-                            "adCreativeText": {
-                                "label": "Ad Text",
-                                "format": "text"
-                            },
-                            "adHeadline": {
-                                "label": "Headline",
-                                "format": "text"
-                            },
-                            "adType": {
-                                "label": "Type",
-                                "format": "text"
-                            },
-                            "impressionsRange": {
-                                "label": "Impressions",
-                                "format": "text"
-                            },
-                            "spendRange": {
-                                "label": "Spend",
-                                "format": "text"
-                            },
-                            "adStartDate": {
-                                "label": "Started",
-                                "format": "text"
-                            },
-                            "searchQuery": {
-                                "label": "Search",
-                                "format": "text"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    },
-    "input": "../INPUT_SCHEMA.json",
-    "dockerfile": "Dockerfile",
-    "webScraper": false
+      }
+    }
+  }
 }

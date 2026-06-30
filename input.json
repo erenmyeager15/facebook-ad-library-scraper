@@ -5,9 +5,10 @@
     "country": "US",
     "adCategory": "all",
     "adStatus": "active",
-    "platforms": ["facebook", "instagram", "messenger", "audience_network"],
-    "maxResults": 20,
+    "platforms": ["facebook", "instagram"],
+    "maxResults": 1,
     "proxyConfiguration": {
-        "useApifyProxy": true
+        "useApifyProxy": true,
+        "apifyProxyGroups": ["RESIDENTIAL"]
     }
 }

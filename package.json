@@ -10,7 +10,10 @@
     "scripts": {
         "build": "tsc",
         "start": "node dist/main.js",
-        "dev": "tsc && node dist/main.js"
+        "dev": "tsc && node dist/main.js",
+        "lint": "tsc --noEmit",
+        "typecheck": "tsc --noEmit",
+        "test": "npm run build && node --test dist/billing.test.js dist/input.test.js dist/routes.test.js"
     },
     "dependencies": {
         "apify": "^3.2.0",

@@ -1,70 +1,12 @@
 import { PlaywrightCrawler, log, LogLevel } from 'crawlee';
 import { Actor } from 'apify';
-import { ActorInput, DEFAULT_INPUT } from './types.js';
+import { ActorInput } from './types.js';
+import { buildSearchUrl, normalizeActorInput } from './input.js';
 import { createRouter } from './routes.js';
-
-const AD_LIBRARY_BASE = 'https://www.facebook.com/ads/library';
-
-const CATEGORY_MAP: Record<string, string> = {
-    all: 'ALL',
-    issues_elections_politics: '2',
-    housing: '3',
-    employment: '4',
-    credit: '5',
-    political: '2',
-};
-
-function buildSearchUrl(keyword: string, input: Required<ActorInput>, pageId?: string): string {
-    const params = new URLSearchParams();
-
-    // active status
-    if (input.adStatus === 'active') params.set('active_status', 'active');
-    else if (input.adStatus === 'inactive') params.set('active_status', 'inactive');
-    else params.set('active_status', 'all');
-
-    params.set('ad_type', 'all');
-    params.set('country', input.country && input.country !== 'ALL' ? input.country : 'ALL');
-
-    if (pageId) {
-        params.set('view_all_page_id', pageId);
-    } else if (keyword) {
-        params.set('q', keyword);
-        params.set('search_type', 'keyword_unordered');
-    }
-
-    if (input.adCategory && input.adCategory !== 'all') {
-        const catCode = CATEGORY_MAP[input.adCategory];
-        if (catCode) params.set('category', catCode);
-    }
-
-    input.platforms.forEach((platform, index) => {
-        params.set(`publisher_platforms[${index}]`, platform);
-    });
-    params.set('media_type', 'all');
-
-    // NOTE: real Ad Library URL requires the trailing slash after /library/
-    return `${AD_LIBRARY_BASE}/?${params.toString()}`;
-}
 
 Actor.main(async () => {
     const actorInput = (await Actor.getInput<ActorInput>()) ?? {};
-    const input = {
-        keywords: actorInput.keywords ?? DEFAULT_INPUT.keywords,
-        pageIds: actorInput.pageIds ?? DEFAULT_INPUT.pageIds,
-        advertiserNames: actorInput.advertiserNames ?? DEFAULT_INPUT.advertiserNames,
-        country: actorInput.country ?? DEFAULT_INPUT.country,
-        adCategory: actorInput.adCategory ?? DEFAULT_INPUT.adCategory,
-        adStatus: actorInput.adStatus ?? DEFAULT_INPUT.adStatus,
-        platforms: actorInput.platforms ?? DEFAULT_INPUT.platforms,
-        maxResults: actorInput.maxResults ?? DEFAULT_INPUT.maxResults,
-        proxyConfiguration: actorInput.proxyConfiguration,
-    } as Required<ActorInput>;
-
-    if (!input.keywords.length && !input.pageIds.length && !input.advertiserNames.length) {
-        log.error('No search criteria provided. Provide at least one of: keywords, pageIds, or advertiserNames.');
-        await Actor.exit({ exitCode: 1 });
-        return;
-    }
+    const input = normalizeActorInput(actorInput);
 
     log.setLevel(LogLevel.INFO);
     log.info('Starting Facebook Ad Library Scraper', {
@@ -118,8 +60,14 @@ Actor.main(async () => {
     log.info('Built search URLs', { count: urls.length });
 
     const seenAdIds = new Set<string>();
-    const maxPerQuery = input.maxResults || 1000;
-    const counters = { totalScraped: 0, maxPerQuery, stopped: false };
+    const maxPerQuery = input.maxResults;
+    const counters = {
+        totalScraped: 0,
+        maxPerQuery,
+        stopped: false,
+        spendingLimitReached: false,
+        saveErrorMessage: null as string | null,
+    };
 
     const router = createRouter(seenAdIds, counters, { platforms: input.platforms });
 
@@ -196,6 +144,14 @@ Actor.main(async () => {
         totalScraped: counters.totalScraped,
         uniqueAds: seenAdIds.size,
     });
+
+    if (counters.saveErrorMessage) {
+        throw new Error(counters.saveErrorMessage);
+    }
+
+    if (counters.totalScraped === 0 && !counters.spendingLimitReached) {
+        throw new Error('No Facebook Ad Library ads were saved. Try a broader keyword, Page ID, country, or status filter.');
+    }
 
     await Actor.exit();
 });
