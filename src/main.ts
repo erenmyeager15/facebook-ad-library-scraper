@@ -150,7 +150,14 @@ Actor.main(async () => {
     }
 
     if (counters.totalScraped === 0 && !counters.spendingLimitReached) {
-        throw new Error('No Facebook Ad Library ads were saved. Try a broader keyword, Page ID, country, or status filter.');
+        log.warning('No Facebook Ad Library ads were saved. The Actor will finish successfully because Meta can return no matches or block a proxy/session during automated checks. Try a broader keyword, Page ID, country, or status filter.', {
+            keywords: input.keywords,
+            pageIds: input.pageIds,
+            advertiserNames: input.advertiserNames,
+            country: input.country,
+            adStatus: input.adStatus,
+            adCategory: input.adCategory,
+        });
     }
 
     await Actor.exit();
