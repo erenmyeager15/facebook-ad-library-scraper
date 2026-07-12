@@ -16,7 +16,7 @@
   "categoriesVersion": "1.0.0",
   "defaultRunOptions": {
     "build": "latest",
-    "memoryMbytes": 4096,
+    "memoryMbytes": 1024,
     "timeoutSecs": 3600
   },
   "exampleRunInput": {

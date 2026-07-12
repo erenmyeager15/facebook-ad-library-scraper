@@ -169,7 +169,7 @@ console.log(`Got ${items.length} public ad records`);
 
 ## How It Works
 
-The Actor builds public Facebook Ad Library search URLs from keywords, advertiser names, or Page IDs, opens them in a Playwright browser, handles cookie consent, scrolls public result pages, extracts ad cards, deduplicates by ad ID, normalizes fields, and writes clean records to the Apify dataset.
+The Actor builds public Facebook Ad Library search URLs from keywords, advertiser names, or Page IDs, opens them in a Playwright browser, handles cookie consent, reads structured ad records from Meta's embedded public page payload when available, falls back to rendered ad cards, deduplicates by ad ID, normalizes fields, and writes clean records to the Apify dataset.
 
 If no ads are saved, the run fails with a clear message instead of appearing successful with an empty dataset.
 

@@ -19,6 +19,20 @@ interface RawAdCandidate {
     videoThumbnailUrls: string[];
 }
 
+interface EmbeddedAdCandidate {
+    ad_archive_id?: unknown;
+    page_id?: unknown;
+    page_name?: unknown;
+    publisher_platform?: unknown;
+    start_date?: unknown;
+    end_date?: unknown;
+    impressions_with_index?: unknown;
+    spend?: unknown;
+    currency?: unknown;
+    targeted_or_reached_countries?: unknown;
+    snapshot?: unknown;
+}
+
 const CTA_TEXTS = new Set([
     'apply now',
     'book now',
@@ -292,6 +306,207 @@ function toNulls<T extends Record<string, unknown>>(obj: T): T {
     return result as T;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+    return value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : null;
+}
+
+function asString(value: unknown): string | null {
+    if (typeof value === 'string') return normalizeText(value);
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+    return null;
+}
+
+function asStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return uniq(value.map((item) => {
+        if (typeof item === 'string') return item;
+        const record = asRecord(item);
+        return asString(
+            record?.name ?? record?.country ?? record?.country_code ?? record?.iso_code ?? record?.code,
+        ) ?? '';
+    }));
+}
+
+function isTemplateText(value: string | null): boolean {
+    return Boolean(value && /{{[^}]+}}/.test(value));
+}
+
+function firstConcreteText(...values: unknown[]): string | null {
+    for (const value of values) {
+        const text = asString(value);
+        if (text && !isTemplateText(text)) return text;
+    }
+    return null;
+}
+
+function epochToIso(value: unknown): string | null {
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds <= 0) return null;
+    return new Date(seconds * 1000).toISOString();
+}
+
+function collectMediaUrls(items: unknown[], keys: string[]): string[] {
+    const urls: string[] = [];
+    for (const item of items) {
+        const record = asRecord(item);
+        if (!record) continue;
+        for (const key of keys) {
+            const value = asString(record[key]);
+            if (value) urls.push(value);
+        }
+    }
+    return uniq(urls);
+}
+
+function formatEmbeddedRange(value: unknown, currency: string | null): string | null {
+    const direct = asString(value);
+    if (direct) return direct;
+    const record = asRecord(value);
+    if (!record) return null;
+    const lower = asString(record.lower_bound ?? record.lowerBound ?? record.min);
+    const upper = asString(record.upper_bound ?? record.upperBound ?? record.max);
+    if (!lower && !upper) return null;
+    const range = lower && upper ? `${lower} - ${upper}` : lower ?? upper;
+    return normalizeText(`${currency ?? ''} ${range ?? ''}`);
+}
+
+function findEmbeddedAdCandidates(value: unknown): EmbeddedAdCandidate[] {
+    const candidates: EmbeddedAdCandidate[] = [];
+    const stack: unknown[] = [value];
+    while (stack.length) {
+        const current = stack.pop();
+        if (!current || typeof current !== 'object') continue;
+        const record = current as Record<string, unknown>;
+        if (record.ad_archive_id && asRecord(record.snapshot)) {
+            candidates.push(record);
+            continue;
+        }
+        for (const child of Object.values(record)) {
+            if (child && typeof child === 'object') stack.push(child);
+        }
+    }
+    return candidates;
+}
+
+export function parseEmbeddedAdRecords(
+    html: string,
+    searchQuery: string,
+    fallbackPlatforms: string[],
+): AdRecord[] {
+    const candidates: EmbeddedAdCandidate[] = [];
+    const scriptPattern = /<script[^>]*type=["']application\/json["'][^>]*>([\s\S]*?)<\/script>/gi;
+    for (const match of html.matchAll(scriptPattern)) {
+        try {
+            candidates.push(...findEmbeddedAdCandidates(JSON.parse(match[1])));
+        } catch {
+            // Meta pages include unrelated script payloads; malformed ones are ignored.
+        }
+    }
+
+    const records: AdRecord[] = [];
+    const parsedIds = new Set<string>();
+    for (const candidate of candidates) {
+        const adId = asString(candidate.ad_archive_id);
+        const snapshot = asRecord(candidate.snapshot);
+        if (!adId || !snapshot || parsedIds.has(adId)) continue;
+        parsedIds.add(adId);
+
+        const cards = Array.isArray(snapshot.cards) ? snapshot.cards.map(asRecord).filter(Boolean) as Record<string, unknown>[] : [];
+        const images = Array.isArray(snapshot.images) ? snapshot.images : [];
+        const extraImages = Array.isArray(snapshot.extra_images) ? snapshot.extra_images : [];
+        const videos = Array.isArray(snapshot.videos) ? snapshot.videos : [];
+        const extraVideos = Array.isArray(snapshot.extra_videos) ? snapshot.extra_videos : [];
+        const body = asRecord(snapshot.body);
+        const firstCard = cards[0] ?? {};
+
+        const advertiserPageId = asString(candidate.page_id ?? snapshot.page_id);
+        const advertiserPageName = firstConcreteText(snapshot.page_name, candidate.page_name);
+        const advertiserPageUrl = asString(snapshot.page_profile_uri)
+            ?? (advertiserPageId ? `https://www.facebook.com/profile.php?id=${advertiserPageId}` : null);
+        const adCreativeText = firstConcreteText(
+            body?.text,
+            snapshot.body,
+            ...cards.map((card) => card.body),
+        );
+        const adHeadline = firstConcreteText(snapshot.title, ...cards.map((card) => card.title));
+        const adDescription = firstConcreteText(
+            snapshot.link_description,
+            ...cards.map((card) => card.link_description),
+        );
+        const ctaButtonText = firstConcreteText(snapshot.cta_text, ...cards.map((card) => card.cta_text));
+        const destinationUrl = firstConcreteText(snapshot.link_url, ...cards.map((card) => card.link_url));
+
+        const imageUrls = uniq([
+            ...collectMediaUrls([...images, ...extraImages], [
+                'original_image_url', 'resized_image_url', 'url', 'src',
+            ]),
+            ...collectMediaUrls(cards, ['original_image_url', 'resized_image_url']),
+        ]).slice(0, 10);
+        const videoUrls = uniq([
+            ...collectMediaUrls([...videos, ...extraVideos], [
+                'video_hd_url', 'video_sd_url', 'watermarked_video_hd_url', 'watermarked_video_sd_url', 'url',
+            ]),
+            ...collectMediaUrls(cards, [
+                'video_hd_url', 'video_sd_url', 'watermarked_video_hd_url', 'watermarked_video_sd_url',
+            ]),
+        ]);
+        const videoThumbnailUrls = uniq([
+            ...collectMediaUrls([...videos, ...extraVideos], ['video_preview_image_url', 'thumbnail_url']),
+            ...collectMediaUrls(cards, ['video_preview_image_url']),
+        ]);
+
+        const displayFormat = asString(snapshot.display_format)?.toLowerCase() ?? '';
+        const adType = videoUrls.length
+            ? 'video'
+            : cards.length > 1 || imageUrls.length > 1 || displayFormat === 'carousel' || displayFormat === 'dco'
+                ? 'carousel'
+                : imageUrls.length
+                    ? 'image'
+                    : 'text';
+        const platformsList = asStringArray(candidate.publisher_platform)
+            .map((platform) => platform.toLowerCase())
+            .filter(Boolean);
+        const currency = asString(candidate.currency);
+        const impressions = asRecord(candidate.impressions_with_index);
+        const fundingEntity = firstConcreteText(snapshot.byline, snapshot.disclaimer_label);
+
+        records.push(toNulls({
+            adId,
+            advertiserPageName,
+            advertiserPageId,
+            advertiserPageUrl,
+            adCreativeText,
+            adHeadline,
+            adDescription,
+            ctaButtonText,
+            destinationUrl,
+            adType,
+            imageUrl: imageUrls[0] ?? null,
+            imageUrls,
+            videoThumbnailUrl: videoThumbnailUrls[0] ?? null,
+            videoUrl: videoUrls[0] ?? null,
+            adStartDate: epochToIso(candidate.start_date),
+            adEndDate: epochToIso(candidate.end_date),
+            impressionsRange: firstConcreteText(impressions?.impressions_text)
+                ?? formatEmbeddedRange(candidate.impressions_with_index, null),
+            spendRange: formatEmbeddedRange(candidate.spend, currency),
+            countriesRunningIn: asStringArray(candidate.targeted_or_reached_countries),
+            languages: [],
+            platformsList: platformsList.length ? platformsList : fallbackPlatforms,
+            fundingEntity,
+            paidForByText: fundingEntity,
+            targetingInfo: { age: null, gender: null, location: null },
+            adLibraryUrl: `https://www.facebook.com/ads/library/?id=${adId}`,
+            scrapedAt: new Date().toISOString(),
+            searchQuery,
+        }) as unknown as AdRecord);
+    }
+
+    return records;
+}
+
 async function dismissCookieConsent(page: PlaywrightCrawlingContext['page']): Promise<void> {
     try {
         const selectors = [
@@ -322,6 +537,18 @@ async function extractAdCards(
     seenAdIds: Set<string>,
     input: { platforms: string[] }
 ): Promise<AdRecord[]> {
+    const html = await page.content();
+    const embeddedRecords = parseEmbeddedAdRecords(html, searchQuery, input.platforms)
+        .filter((record) => record.adId && !seenAdIds.has(record.adId));
+    if (embeddedRecords.length) {
+        for (const record of embeddedRecords) seenAdIds.add(record.adId as string);
+        log.info('Ad records found in embedded Meta payload', {
+            searchQuery,
+            records: embeddedRecords.length,
+        });
+        return embeddedRecords;
+    }
+
     const rawCandidates = await page.evaluate((): RawAdCandidate[] => {
         const normalize = (value: string | null | undefined): string => value?.replace(/\s+/g, ' ').trim() ?? '';
         const linesFrom = (value: string): string[] => value
