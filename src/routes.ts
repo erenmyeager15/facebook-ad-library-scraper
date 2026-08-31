@@ -33,6 +33,11 @@ interface EmbeddedAdCandidate {
     snapshot?: unknown;
 }
 
+export interface SearchTarget {
+    kind: 'keyword' | 'advertiser' | 'page';
+    value: string;
+}
+
 const CTA_TEXTS = new Set([
     'apply now',
     'book now',
@@ -507,6 +512,56 @@ export function parseEmbeddedAdRecords(
     return records;
 }
 
+function normalizeMatchText(value: string | null | undefined): string {
+    return (value ?? '')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/gi, ' ')
+        .trim()
+        .toLowerCase();
+}
+
+export function recordMatchesSearchTarget(record: AdRecord, target: SearchTarget): boolean {
+    const expected = normalizeMatchText(target.value);
+    if (!expected) return false;
+
+    if (target.kind === 'page') {
+        return normalizeMatchText(record.advertiserPageId) === expected;
+    }
+
+    if (target.kind === 'advertiser') {
+        const advertiser = normalizeMatchText(record.advertiserPageName);
+        return Boolean(advertiser && (advertiser.includes(expected) || expected.includes(advertiser)));
+    }
+
+    const searchable = [
+        record.advertiserPageName,
+        record.adCreativeText,
+        record.adHeadline,
+        record.adDescription,
+        record.ctaButtonText,
+        record.destinationUrl,
+    ].map(normalizeMatchText).filter(Boolean);
+
+    return searchable.some((value) => value.includes(expected));
+}
+
+export function recordMatchesRequestedStatus(
+    record: AdRecord,
+    status: 'active' | 'inactive' | 'all',
+    now = new Date(),
+): boolean {
+    if (status !== 'active') return true;
+
+    const startedAt = record.adStartDate ? Date.parse(record.adStartDate) : Number.NaN;
+    const endedAt = record.adEndDate ? Date.parse(record.adEndDate) : Number.NaN;
+    const nowTime = now.getTime();
+
+    if (Number.isFinite(startedAt) && startedAt > nowTime) return false;
+    if (Number.isFinite(endedAt) && endedAt <= nowTime) return false;
+    return true;
+}
+
 async function dismissCookieConsent(page: PlaywrightCrawlingContext['page']): Promise<void> {
     try {
         const selectors = [
@@ -534,12 +589,18 @@ async function dismissCookieConsent(page: PlaywrightCrawlingContext['page']): Pr
 async function extractAdCards(
     page: PlaywrightCrawlingContext['page'],
     searchQuery: string,
+    target: SearchTarget,
     seenAdIds: Set<string>,
-    input: { platforms: string[] }
+    input: { platforms: string[]; adStatus: 'active' | 'inactive' | 'all' }
 ): Promise<AdRecord[]> {
     const html = await page.content();
     const embeddedRecords = parseEmbeddedAdRecords(html, searchQuery, input.platforms)
-        .filter((record) => record.adId && !seenAdIds.has(record.adId));
+        .filter((record) => (
+            record.adId
+            && !seenAdIds.has(record.adId)
+            && recordMatchesSearchTarget(record, target)
+            && recordMatchesRequestedStatus(record, input.adStatus)
+        ));
     if (embeddedRecords.length) {
         for (const record of embeddedRecords) seenAdIds.add(record.adId as string);
         log.info('Ad records found in embedded Meta payload', {
@@ -657,7 +718,6 @@ async function extractAdCards(
 
     for (const candidate of rawCandidates) {
         if (seenAdIds.has(candidate.adId)) continue;
-        seenAdIds.add(candidate.adId);
 
         const links = candidate.links
             .map((link) => ({ text: normalizeText(link.text) ?? '', href: normalizeFacebookUrl(link.href) ?? '' }))
@@ -755,7 +815,10 @@ async function extractAdCards(
             searchQuery,
         }) as unknown as AdRecord;
 
-        records.push(record);
+        if (recordMatchesSearchTarget(record, target) && recordMatchesRequestedStatus(record, input.adStatus)) {
+            seenAdIds.add(candidate.adId);
+            records.push(record);
+        }
     }
 
     return records;
@@ -1043,12 +1106,13 @@ export function createRouter(
         spendingLimitReached: boolean;
         saveErrorMessage: string | null;
     },
-    input: { platforms: string[] }
+    input: { platforms: string[]; adStatus: 'active' | 'inactive' | 'all' }
 ) {
     const router = Router.create<PlaywrightCrawlingContext>();
 
     const searchHandler = async ({ request, page }: PlaywrightCrawlingContext): Promise<void> => {
         const keyword = request.userData.keyword as string;
+        const target = request.userData.target as SearchTarget;
 
         if (counters.stopped) {
             log.info('Scraping already stopped by the spending limit or a billing error; skipping', { keyword });
@@ -1071,7 +1135,7 @@ export function createRouter(
         const maxStaleRounds = 5;
 
         while (!counters.stopped && queryScraped < counters.maxPerQuery && staleRounds < maxStaleRounds) {
-            const records = await extractAdCards(page, keyword, seenAdIds, input);
+            const records = await extractAdCards(page, keyword, target, seenAdIds, input);
             log.info('Extracted records from current viewport', {
                 keyword,
                 records: records.length,

@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { extractAdId, normalizeFacebookUrl, parseEmbeddedAdRecords, parsePageIdFromUrl } from './routes.js';
+import {
+    extractAdId,
+    normalizeFacebookUrl,
+    parseEmbeddedAdRecords,
+    parsePageIdFromUrl,
+    recordMatchesRequestedStatus,
+    recordMatchesSearchTarget,
+} from './routes.js';
 
 test('extracts ad IDs from library URLs and paths', () => {
     assert.equal(extractAdId('https://www.facebook.com/ads/library/?id=1234567890123'), '1234567890123');
@@ -101,4 +108,50 @@ test('ignores malformed payloads and deduplicates embedded ads', () => {
     const records = parseEmbeddedAdRecords(html, 'Example', ['facebook']);
     assert.equal(records.length, 1);
     assert.equal(records[0].adId, '123456789');
+});
+
+test('rejects unrelated embedded ads for keyword, advertiser, and page searches', () => {
+    const nikeRecord = {
+        ...parseEmbeddedAdRecords(`<script type="application/json">${JSON.stringify({
+            ads: [{
+                ad_archive_id: '123456789',
+                page_id: '15087023444',
+                page_name: 'Nike',
+                snapshot: { page_name: 'Nike', body: { text: 'Run with Nike Air' } },
+            }],
+        })}</script>`, 'Nike', ['facebook'])[0],
+    };
+    const unrelatedRecord = {
+        ...nikeRecord,
+        advertiserPageName: 'IControl: Easy Widgets Themes',
+        advertiserPageId: '721404351056614',
+        adCreativeText: null,
+        adHeadline: 'iControl: Easy Widgets Themes',
+        adDescription: null,
+        destinationUrl: null,
+    };
+
+    assert.equal(recordMatchesSearchTarget(nikeRecord, { kind: 'keyword', value: 'Nike' }), true);
+    assert.equal(recordMatchesSearchTarget(unrelatedRecord, { kind: 'keyword', value: 'Nike' }), false);
+    assert.equal(recordMatchesSearchTarget(nikeRecord, { kind: 'advertiser', value: 'Nike' }), true);
+    assert.equal(recordMatchesSearchTarget(unrelatedRecord, { kind: 'advertiser', value: 'Nike' }), false);
+    assert.equal(recordMatchesSearchTarget(nikeRecord, { kind: 'page', value: '15087023444' }), true);
+    assert.equal(recordMatchesSearchTarget(unrelatedRecord, { kind: 'page', value: '15087023444' }), false);
+});
+
+test('rejects ended or future ads from active output', () => {
+    const baseRecord = parseEmbeddedAdRecords(`<script type="application/json">${JSON.stringify({
+        ads: [{
+            ad_archive_id: '123456789',
+            page_id: '15087023444',
+            page_name: 'Nike',
+            snapshot: { page_name: 'Nike', body: { text: 'Nike Air' } },
+        }],
+    })}</script>`, 'Nike', ['facebook'])[0];
+    const now = new Date('2026-08-31T12:00:00.000Z');
+
+    assert.equal(recordMatchesRequestedStatus({ ...baseRecord, adStartDate: '2026-08-28T07:00:00.000Z', adEndDate: null }, 'active', now), true);
+    assert.equal(recordMatchesRequestedStatus({ ...baseRecord, adStartDate: '2026-08-28T07:00:00.000Z', adEndDate: '2026-08-30T07:00:00.000Z' }, 'active', now), false);
+    assert.equal(recordMatchesRequestedStatus({ ...baseRecord, adStartDate: '2026-09-01T07:00:00.000Z', adEndDate: null }, 'active', now), false);
+    assert.equal(recordMatchesRequestedStatus({ ...baseRecord, adEndDate: '2026-08-30T07:00:00.000Z' }, 'all', now), true);
 });

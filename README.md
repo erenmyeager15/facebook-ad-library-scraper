@@ -46,8 +46,8 @@ To control cost, start with one search term or one Page ID, one country, active 
 
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
-| `keywords` | string array | `["Nike"]` | Search keywords. Up to 5 items. |
-| `pageIds` | string array | `[]` | Numeric Facebook Page IDs. Up to 5 items. |
+| `keywords` | string array | `["Nike"]` | Find ads whose public advertiser, creative, headline, or destination fields mention the keyword. Up to 5 items. |
+| `pageIds` | string array | `[]` | Numeric Facebook Page IDs for an exact advertiser-page search. Up to 5 items. |
 | `advertiserNames` | string array | `[]` | Advertiser or Page names. Up to 5 items. |
 | `country` | string | `US` | Two-letter country code such as `US`, `GB`, `DE`, `IN`, or `ALL`. |
 | `adCategory` | string | `all` | `all`, `issues_elections_politics`, `housing`, `employment`, `credit`, or `political`. |
@@ -76,6 +76,8 @@ The Actor rejects runs with more than 10 total keyword, Page ID, and advertiser-
   }
 }
 ```
+
+Live Store example: [Find 10 Active Ads Mentioning Nike in the US](https://apify.com/fascinating_lentil/facebook-ad-library-scraper/examples/track-active-nike-ads-in-the-us). Keyword searches can include ads from retailers and other advertisers that mention the brand; use a numeric Page ID when you need ads from one exact Facebook Page.
 
 ### Page ID search
 

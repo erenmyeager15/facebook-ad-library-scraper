@@ -2,7 +2,7 @@ import { PlaywrightCrawler, log, LogLevel } from 'crawlee';
 import { Actor } from 'apify';
 import { ActorInput } from './types.js';
 import { buildSearchUrl, normalizeActorInput } from './input.js';
-import { createRouter } from './routes.js';
+import { createRouter, SearchTarget } from './routes.js';
 
 Actor.main(async () => {
     const actorInput = (await Actor.getInput<ActorInput>()) ?? {};
@@ -31,13 +31,13 @@ Actor.main(async () => {
         ? await Actor.createProxyConfiguration(effectiveProxy)
         : undefined;
 
-    const urls: Array<{ url: string; label: string; userData: { keyword: string } }> = [];
+    const urls: Array<{ url: string; label: string; userData: { keyword: string; target: SearchTarget } }> = [];
 
     for (const keyword of input.keywords) {
         urls.push({
             url: buildSearchUrl(keyword, input),
             label: 'search',
-            userData: { keyword },
+            userData: { keyword, target: { kind: 'keyword', value: keyword } },
         });
     }
 
@@ -45,7 +45,7 @@ Actor.main(async () => {
         urls.push({
             url: buildSearchUrl('', input, pageId),
             label: 'page',
-            userData: { keyword: `page:${pageId}` },
+            userData: { keyword: `page:${pageId}`, target: { kind: 'page', value: pageId } },
         });
     }
 
@@ -53,7 +53,7 @@ Actor.main(async () => {
         urls.push({
             url: buildSearchUrl(name, input),
             label: 'search',
-            userData: { keyword: name },
+            userData: { keyword: name, target: { kind: 'advertiser', value: name } },
         });
     }
 
@@ -69,7 +69,10 @@ Actor.main(async () => {
         saveErrorMessage: null as string | null,
     };
 
-    const router = createRouter(seenAdIds, counters, { platforms: input.platforms });
+    const router = createRouter(seenAdIds, counters, {
+        platforms: input.platforms,
+        adStatus: input.adStatus,
+    });
 
     const crawler = new PlaywrightCrawler({
         proxyConfiguration,
