@@ -1,9 +1,12 @@
-import { PlaywrightCrawler, log, LogLevel } from 'crawlee';
+import { PlaywrightCrawler, PlaywrightCrawlingContext, log, LogLevel } from 'crawlee';
 import { Actor } from 'apify';
 import { ActorInput } from './types.js';
 import { buildSearchUrl, normalizeActorInput } from './input.js';
 import { createRouter, SearchTarget } from './routes.js';
 import { RunReporter, SearchEvidenceError } from './reporting.js';
+import { blockMediaDownloads, FACEBOOK_BROWSER_LIMITS } from './performance.js';
+import { AdMediaCollector, createAdMediaCollector } from './media.js';
+import { classifySearchError, createPageWarmup, createSearchNavigation } from './navigation.js';
 
 Actor.main(async () => {
     const actorInput = (await Actor.getInput<ActorInput>()) ?? {};
@@ -74,13 +77,23 @@ Actor.main(async () => {
         saveErrorMessage: null as string | null,
     };
 
+    const pageMedia = new WeakMap<PlaywrightCrawlingContext['page'], AdMediaCollector>();
+    const warmPage = createPageWarmup();
+    const readSearch = createSearchNavigation({
+        onRecovery: (diagnostic) => log.warning('Restoring the exact requested search after a scope reset', diagnostic),
+    });
+    const lastSearchReason = new Map<string, SearchEvidenceError['reason']>();
     const router = createRouter(seenAdIds, counters, {
         platforms: input.platforms,
         adStatus: input.adStatus,
-    }, reporter);
+    }, reporter, {
+        readMedia: async (page) => await pageMedia.get(page)?.read() ?? new Map(),
+        readSearch,
+    });
 
     const crawler = new PlaywrightCrawler({
         proxyConfiguration,
+        maxConcurrency: FACEBOOK_BROWSER_LIMITS.maxConcurrency,
         maxRequestsPerCrawl: urls.length * 30,
         navigationTimeoutSecs: 90,
         requestHandlerTimeoutSecs: 300,
@@ -95,53 +108,56 @@ Actor.main(async () => {
         },
         browserPoolOptions: {
             useFingerprints: true,
+            maxOpenPagesPerBrowser: FACEBOOK_BROWSER_LIMITS.maxOpenPagesPerBrowser,
         },
         preNavigationHooks: [
-            async ({ page, request }, gotoOptions) => {
+            async ({ page, request, blockRequests }, gotoOptions) => {
+                // Apply before the landing-page warm-up as well as the search.
+                // Keep cache, CSS and source data requests working; only skip
+                // video/font binaries, retaining previews needed for hydration.
+                await blockMediaDownloads(blockRequests);
+                pageMedia.get(page)?.dispose();
+                pageMedia.set(page, createAdMediaCollector(page, request.url, maxPerQuery));
                 if (gotoOptions) {
                     gotoOptions.waitUntil = 'domcontentloaded';
                     gotoOptions.timeout = 90_000;
                 }
-                // Warm up the session: Facebook 403s cold requests to deep Ad Library
-                // URLs. Visiting the Ad Library landing first establishes cookies in
-                // this browser context so the subsequent query navigation is accepted.
-                if (!request.userData.__warmed) {
-                    request.userData.__warmed = true;
-                    try {
-                        await page.goto('https://www.facebook.com/ads/library/', {
-                            waitUntil: 'domcontentloaded',
-                            timeout: 60_000,
-                        });
-                        const consentSelectors = [
-                            'button[data-cookiebanner="accept_button"]',
-                            'button:has-text("Allow all cookies")',
-                            'button:has-text("Allow the use of cookies")',
-                            'button:has-text("Accept All")',
-                        ];
-                        for (const sel of consentSelectors) {
-                            const btn = page.locator(sel).first();
-                            if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
-                                await btn.click().catch(() => {});
-                                log.info('Dismissed cookie consent popup (warm-up)');
-                                break;
-                            }
-                        }
-                        await new Promise((r) => setTimeout(r, 1500 + Math.floor(Math.random() * 1500)));
-                    } catch {
-                        // Warm-up best effort; continue to the real navigation regardless.
-                    }
-                }
+                // Retries open fresh pages. A flag on persistent request.userData
+                // must not suppress warming that new browser page/context.
+                await warmPage(page);
             },
         ],
+        postNavigationHooks: [async ({ page, request, response }) => {
+            try {
+                if (response && response.status() >= 400) {
+                    throw new SearchEvidenceError([401, 403, 429].includes(response.status()) ? 'blocked' : 'source_error');
+                }
+                // Settle before Crawlee's blocked-page selectors run; navigation
+                // must not leave them evaluating a destroyed execution context.
+                await readSearch(page, request.url);
+            } catch (error) {
+                if (error instanceof SearchEvidenceError) lastSearchReason.set(request.uniqueKey, error.reason);
+                throw error;
+            }
+        }],
         requestHandler: async (context) => {
-            await router(context);
+            try {
+                await router(context);
+                lastSearchReason.delete(context.request.uniqueKey);
+                const media = pageMedia.get(context.page)?.counts();
+                if (media) log.info('Public ad media recovery counters', media);
+            } catch (error) {
+                if (error instanceof SearchEvidenceError) lastSearchReason.set(context.request.uniqueKey, error.reason);
+                throw error;
+            }
         },
         failedRequestHandler: async ({ request }, error) => {
-            const reason = error instanceof SearchEvidenceError ? error.reason : 'request_failed';
+            const reason = classifySearchError(error);
             reporter.finish(request.uniqueKey, 'failed', reason, request.retryCount);
             log.error('Facebook search failed after recovery attempts.', {
                 jobId: request.uniqueKey,
                 reason,
+                earlierSearchReason: lastSearchReason.get(request.uniqueKey) ?? null,
                 retryCount: request.retryCount,
             });
         },

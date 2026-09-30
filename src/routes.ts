@@ -4,6 +4,8 @@ import { Actor } from 'apify';
 import { wasPushedRecordSaved } from './billing.js';
 import { AdRecord } from './types.js';
 import { inspectSearchEvidence, RunReporter, SearchEvidence, SearchEvidenceError } from './reporting.js';
+import { createSearchNavigation } from './navigation.js';
+import { waitForAdPreviews } from './performance.js';
 
 interface RawAdLink {
     text: string;
@@ -406,6 +408,23 @@ export function parseEmbeddedAdRecords(
         }
     }
 
+    return parseAdCandidates(candidates, searchQuery, fallbackPlatforms);
+}
+
+export function parsePublicAdPayload(
+    payload: unknown,
+    searchQuery: string,
+    fallbackPlatforms: string[],
+): AdRecord[] {
+    return parseAdCandidates(findEmbeddedAdCandidates(payload), searchQuery, fallbackPlatforms);
+}
+
+function parseAdCandidates(
+    candidates: EmbeddedAdCandidate[],
+    searchQuery: string,
+    fallbackPlatforms: string[],
+): AdRecord[] {
+
     const records: AdRecord[] = [];
     const parsedIds = new Set<string>();
     for (const candidate of candidates) {
@@ -506,6 +525,26 @@ export function parseEmbeddedAdRecords(
     }
 
     return records;
+}
+
+export interface RecoveredAdMedia {
+    adId: string;
+    imageUrls: string[];
+    videoUrl: string | null;
+    videoThumbnailUrl: string | null;
+}
+
+/** Recover URLs only for the same already-observed ad, never add new ads. */
+export function recoverAdMedia(record: AdRecord, media: RecoveredAdMedia | undefined): AdRecord {
+    if (!media || media.adId !== record.adId) return record;
+    const imageUrls = record.imageUrls.length ? record.imageUrls : media.imageUrls;
+    const videoUrl = record.videoUrl || media.videoUrl;
+    const videoThumbnailUrl = record.videoThumbnailUrl || media.videoThumbnailUrl;
+    return {
+        ...record, imageUrls, imageUrl: record.imageUrl || imageUrls[0] || null,
+        videoUrl, videoThumbnailUrl,
+        adType: videoUrl || videoThumbnailUrl ? 'video' : record.adType,
+    };
 }
 
 function normalizeMatchText(value: string | null | undefined): string {
@@ -1100,11 +1139,16 @@ export function createRouter(
         wait?: (ms: number) => Promise<void>;
         scroll?: typeof scrollToLoadMore;
         pushData?: (record: AdRecord) => Promise<{ chargedCount: number; eventChargeLimitReached?: boolean }>;
+        readMedia?: (page: PlaywrightCrawlingContext['page']) => Promise<ReadonlyMap<string, RecoveredAdMedia>>;
+        readSearch?: (page: PlaywrightCrawlingContext['page'], requestedUrl: string) => Promise<{ html: string; url: string }>;
+        waitPreviews?: (page: PlaywrightCrawlingContext['page']) => Promise<void>;
     } = {}
 ) {
     const router = Router.create<PlaywrightCrawlingContext>();
     const wait = dependencies.wait ?? sleep;
     const scroll = dependencies.scroll ?? scrollToLoadMore;
+    const readSearch = dependencies.readSearch ?? createSearchNavigation({ wait: dependencies.wait });
+    const waitPreviews = dependencies.waitPreviews ?? waitForAdPreviews;
     const pushData = dependencies.pushData ?? ((record: AdRecord) => Actor.pushData(record, 'ad-scraped'));
 
     const searchHandler = async ({ request, page, response }: PlaywrightCrawlingContext): Promise<void> => {
@@ -1135,7 +1179,7 @@ export function createRouter(
         });
 
         await dismissCookieConsent(page);
-        await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
+        await page.waitForLoadState('domcontentloaded', { timeout: 5000 }).catch(() => {});
         await wait(randomDelay());
 
         let queryScraped = job.savedAds;
@@ -1147,23 +1191,38 @@ export function createRouter(
         let observedMatchedCandidates = false;
 
         while (!counters.stopped && queryScraped < counters.maxPerQuery && staleRounds < maxStaleRounds) {
+            // Scope recovery can navigate to a fresh document. Settle it before
+            // readiness, then refresh HTML without allowing another navigation
+            // that would invalidate the preview check.
+            await readSearch(page, request.url);
+            await waitPreviews(page);
+            const snapshotUrl = page.url();
             const html = await page.content();
-            evidence = inspectSearchEvidence(html, page.url(), request.url);
+            if (page.url() !== snapshotUrl) throw new SearchEvidenceError('navigation_interrupted');
+            evidence = inspectSearchEvidence(html, snapshotUrl, request.url);
             if (evidence.kind === 'blocked' || ['search_scope_changed', 'source_error'].includes(evidence.reason)) {
                 throw new SearchEvidenceError(evidence.reason);
             }
             const inspection = { html, candidates: 0, matchedCandidates: 0 };
-            const records = await extractAdCards(page, keyword, target, seenAdIds, input, inspection);
+            const extracted = await extractAdCards(page, keyword, target, seenAdIds, input, inspection);
+            const media = await dependencies.readMedia?.(page);
+            // DOM/media awaits may cross a late client-side redirect. Never
+            // write or bill those candidates after their search scope changes.
+            const currentScope = inspectSearchEvidence('', page.url(), request.url);
+            if (currentScope.reason !== 'unverified_zero') throw new SearchEvidenceError(currentScope.reason);
+            const records = extracted.map((record) => recoverAdMedia(record, record.adId ? media?.get(record.adId) : undefined));
             observedCandidates ||= inspection.candidates > 0;
             observedMatchedCandidates ||= inspection.matchedCandidates > 0;
             job.candidateScans += inspection.candidates;
-            if (evidence.kind === 'empty' && (observedCandidates || job.savedAds > 0)) {
+            if (evidence.kind === 'empty' && (observedCandidates || job.savedAds > 0 || (media?.size ?? 0) > 0)) {
                 // A placeholder or stale payload must not override actual ads.
                 evidence = { kind: 'unknown', reason: 'contradictory_payload' };
             }
             log.info('Extracted records from current viewport', {
                 keyword,
                 records: records.length,
+                mediaMatchedRecords: extracted.filter((record) => record.adId && media?.has(record.adId)).length,
+                videoRecords: records.filter((record) => Boolean(record.videoUrl || record.videoThumbnailUrl)).length,
                 totalScraped: counters.totalScraped,
             });
 

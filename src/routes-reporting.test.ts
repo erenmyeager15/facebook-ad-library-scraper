@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { log, PlaywrightCrawlingContext, Request } from 'crawlee';
-import { createRouter } from './routes.js';
+import { createRouter, RecoveredAdMedia } from './routes.js';
 import { RunReporter, SearchEvidenceError } from './reporting.js';
 
 const url = 'https://www.facebook.com/ads/library/?q=Nike&country=US&active_status=active';
@@ -25,11 +25,15 @@ const exhausted = jsonScript({
 });
 
 function harness(options: { max?: number; jobs?: string[]; scroll?: () => Promise<boolean>;
+    media?: ReadonlyMap<string, RecoveredAdMedia>;
+    onMediaRead?: () => void;
+    waitPreviews?: () => Promise<void>;
     push?: (id: string) => Promise<{ chargedCount: number; eventChargeLimitReached?: boolean }> } = {}) {
     let html = '<html>Loading</html>';
     let loadedUrl = url;
     let status = 200;
     let scans = 0;
+    let recoveries = 0;
     const reporter = new RunReporter(options.jobs ?? [jobIds[0]]);
     const counters = { totalScraped: 0, maxPerQuery: options.max ?? 2, stopped: false,
         spendingLimitReached: false, saveErrorMessage: null as string | null };
@@ -38,6 +42,7 @@ function harness(options: { max?: number; jobs?: string[]; scroll?: () => Promis
     const page = {
         content: async () => { scans += 1; return html; },
         url: () => loadedUrl,
+        goto: async (value: string) => { recoveries += 1; loadedUrl = value; return { status: () => status }; },
         waitForLoadState: async () => {},
         evaluate: async () => [],
         locator: () => ({ first: () => ({ isVisible: async () => false }) }),
@@ -45,6 +50,8 @@ function harness(options: { max?: number; jobs?: string[]; scroll?: () => Promis
     const router = createRouter(seen, counters, input, reporter, {
         wait: async () => {},
         scroll: options.scroll ?? (async () => false),
+        waitPreviews: options.waitPreviews ?? (async () => {}),
+        readMedia: async () => { options.onMediaRead?.(); return options.media ?? new Map(); },
         pushData: async (record) => {
             const result = options.push ? await options.push(record.adId!) : { chargedCount: 1 };
             if (result.chargedCount > 0 || !result.eventChargeLimitReached) savedIds.push(record.adId!);
@@ -57,6 +64,7 @@ function harness(options: { max?: number; jobs?: string[]; scroll?: () => Promis
         setUrl(value: string) { loadedUrl = value; },
         setStatus(value: number) { status = value; },
         scans: () => scans,
+        recoveries: () => recoveries,
         async run(jobId = jobIds[0], retryCount = 0) {
             const request = new Request({ url, uniqueKey: jobId, label: 'search',
                 userData: { keyword: 'Nike', target: { kind: 'keyword', value: 'Nike' } } });
@@ -72,8 +80,18 @@ test('router confirms empty only from scoped zero and final-page evidence', asyn
     await h.run();
     assert.equal(h.reporter.summary().outcome, 'empty');
     assert.equal(h.reporter.summary().confirmedEmptySearches, 1);
-    assert.equal(h.scans(), 1);
+    assert.equal(h.scans(), 3);
     assert.deepEqual(h.savedIds, []);
+});
+
+test('recovered media alone cannot create rows or certify a contradictory empty search', async () => {
+    const media = new Map([['123456789', { adId: '123456789', imageUrls: [],
+        videoUrl: 'https://video.xx.fbcdn.net/public.mp4', videoThumbnailUrl: null }]]);
+    const h = harness({ media });
+    h.setHtml(empty);
+    await assert.rejects(h.run(), SearchEvidenceError);
+    assert.deepEqual(h.savedIds, []);
+    assert.equal(h.reporter.summary().confirmedEmptySearches, 0);
 });
 
 test('loading/no cards throws retryable verification error, never confirmed empty', async () => {
@@ -100,6 +118,56 @@ test('HTTP access errors reject before page extraction', async () => {
         assert.equal(h.scans(), 0);
         assert.equal(h.reporter.summary().confirmedEmptySearches, 0);
     }
+});
+
+test('router recovers a reset same-library URL before extracting the requested ad', async () => {
+    const h = harness();
+    h.setHtml(exhausted);
+    h.setUrl('https://www.facebook.com/ads/library/');
+    await h.run();
+    assert.equal(h.recoveries(), 1);
+    assert.deepEqual(h.savedIds, ['123456789']);
+    assert.equal(h.reporter.summary().failedSearches, 0);
+});
+
+test('recovered document previews finish before the fresh extraction snapshot', async () => {
+    let previewChecks = 0;
+    const h = harness({ waitPreviews: async () => {
+        assert.equal(h.recoveries(), 1);
+        previewChecks += 1;
+        h.setHtml(exhausted);
+    } });
+    h.setUrl('https://www.facebook.com/ads/library/');
+    await h.run();
+    assert.equal(previewChecks, 1);
+    assert.deepEqual(h.savedIds, ['123456789']);
+});
+
+test('scope reset during preview readiness cannot recover and then save without a new readiness check', async () => {
+    const h = harness({ waitPreviews: async () => h.setUrl('https://www.facebook.com/ads/library/') });
+    h.setHtml(exhausted);
+    await assert.rejects(h.run(), (error: unknown) => error instanceof SearchEvidenceError
+        && error.reason === 'search_scope_changed');
+    assert.equal(h.recoveries(), 0);
+    assert.deepEqual(h.savedIds, []);
+});
+
+test('late scope changes during media reads cannot save or charge extracted rows', async () => {
+    const h = harness({ onMediaRead: () => h.setUrl(url.replace('q=Nike', 'q=Other')) });
+    h.setHtml(exhausted);
+    await assert.rejects(h.run(), (error: unknown) => error instanceof SearchEvidenceError
+        && error.reason === 'search_scope_changed');
+    assert.deepEqual(h.savedIds, []);
+    assert.equal(h.seen.size, 0);
+    assert.equal(h.counters.totalScraped, 0);
+});
+
+test('unready initial previews cannot be saved or charged as image-only ads', async () => {
+    const h = harness({ waitPreviews: async () => { throw new SearchEvidenceError('preview_unready'); } });
+    h.setHtml(exhausted);
+    await assert.rejects(h.run(), (error: unknown) => error instanceof SearchEvidenceError && error.reason === 'preview_unready');
+    assert.deepEqual(h.savedIds, []);
+    assert.equal(h.seen.size, 0);
 });
 
 test('retry recovery stays one job with no terminal failure', async () => {

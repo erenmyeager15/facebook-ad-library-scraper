@@ -121,7 +121,7 @@ export function inspectSearchEvidence(html: string, loadedUrl: string, requested
 
 export type JobOutcome = 'pending' | 'running' | 'results' | 'empty' | 'limited' | 'failed';
 export type Reason = SearchEvidence['reason'] | 'max_results' | 'spending_limit' | 'stale_scroll'
-    | 'no_new_data' | 'request_failed' | 'save_error' | 'crawl_error' | 'not_started';
+    | 'no_new_data' | 'request_failed' | 'navigation_interrupted' | 'preview_unready' | 'save_error' | 'crawl_error' | 'not_started';
 
 export interface SearchJob {
     jobId: string;
