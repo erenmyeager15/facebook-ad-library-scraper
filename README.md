@@ -16,7 +16,8 @@ For a low-cost first run, use the default sample input: `Nike`, `US`, active ads
 - Primary image URL, image URLs, video thumbnail, and video URL when visible
 - Start and end dates when visible
 - Spend and impression ranges when Meta publicly discloses them
-- Countries, languages, and platform list when visible
+- Countries when disclosed; platform list from source evidence when available, otherwise requested-filter fallback
+- `languages` is currently an empty array; language extraction is not implemented
 - Funding entity and paid-for-by text for eligible issue/political ads
 - Public targeting summary when visible
 - Search query and scrape timestamp
@@ -31,14 +32,29 @@ For a low-cost first run, use the default sample input: `Nike`, `US`, active ads
 
 ## Pricing
 
+The live pricing model is pay-per-event **plus Apify platform usage paid separately by the user**. The ad-event rate is not an all-in run price. The rates below reflect the active pricing checked on 30 September 2026; check the Store pricing panel before running.
+
 | Event | Price | Notes |
 | --- | ---: | --- |
-| `apify-actor-start` | `$0.00005` per GB | Charged when the Actor starts. A 4 GB run charges 4 start events. |
+| `apify-actor-start` | `$0.001` per GB, minimum one event | Charged when the Actor starts. The default 1024 MB run charges one start event; a 4 GB run charges four. |
 | `ad-scraped` | `$0.001` per ad | Charged once for each clean ad record saved to the dataset. |
 
-Example ad-event cost: 1,000 saved ads cost `$1.00`; 10,000 saved ads cost `$10.00`. Start events are tiny but still included in paid runs.
+Example event fees for one run at the default 1024 MB:
 
-Failed, blocked, duplicate, or empty records are not charged as `ad-scraped` events. The Actor stops before doing more ad extraction when the user's maximum run cost is reached.
+| Saved ads | Ad-event fees | Start-event fee | Event subtotal, excluding platform usage |
+| ---: | ---: | ---: | ---: |
+| 1 | `$0.001` | `$0.001` | `$0.002` |
+| 10 | `$0.010` | `$0.001` | `$0.011` |
+| 100 | `$0.100` | `$0.001` | `$0.101` |
+| 1,000 | `$1.000` | `$0.001` | `$1.001` |
+
+Compute, Residential proxy traffic, storage and other applicable platform usage are additional. Browser/proxy costs can dominate the ad-event fees, so 1,000 ads are **not `$1` all-in**. Current representative 100- and 500-ad total-cost benchmarks have not been established; do not extrapolate them from an older 10-ad owner test. Inspect your run's actual usage and bill before increasing volume.
+
+Owner check on 30 September 2026: [candidate build 1.0.20](https://console.apify.com/view/runs/T0WJamqZISRJcccja) saved one clean Nike ad in 33.9 seconds at 1024 MB, with about `$0.052` in reported platform usage. The listed one-ad event subtotal is separately `$0.002`, as shown above; the owner check is not a customer billing or creator-profit measurement. Its summary was `limited` / `max_results`, with one saved ad, zero failed searches and zero retries. This verifies a capped one-ad workflow, not a complete archive or a 100-/500-ad cost benchmark; do not extrapolate it to bulk runs.
+
+Failed, blocked, duplicate, or empty records are not charged as `ad-scraped` events. The Actor stops further ad extraction and saving once Apify reports that the event-charge limit has been reached. This is not a guaranteed all-in cap on separately billed platform usage; in-flight browser work and cleanup can still incur usage costs.
+
+An empty or failed run can still incur its start-event and platform-usage costs; ads saved before a partial failure still incur ad-event fees. The table explains existing fees, not a pricing or resource-setting change.
 
 To control cost, start with one search term or one Page ID, one country, active ads, and `maxResults: 1`. Increase volume only after the sample output looks right. Residential proxy is recommended for Facebook reliability.
 
@@ -107,6 +123,8 @@ Live Store example: [Find 10 Active Ads Mentioning Nike in the US](https://apify
 
 ## Output Dataset
 
+The following JSON is a synthetic schema illustration, not a live scrape or a test-run result. `platformsList` may reflect the requested filters when source platform evidence is unavailable; it is not always independently observed.
+
 ```json
 {
   "adId": "1234567890123456789",
@@ -128,7 +146,7 @@ Live Store example: [Find 10 Active Ads Mentioning Nike in the US](https://apify
   "impressionsRange": null,
   "spendRange": null,
   "countriesRunningIn": ["US"],
-  "languages": ["en"],
+  "languages": [],
   "platformsList": ["facebook", "instagram"],
   "fundingEntity": null,
   "paidForByText": null,
@@ -144,6 +162,8 @@ Live Store example: [Find 10 Active Ads Mentioning Nike in the US](https://apify
 ```
 
 Many commercial ads do not expose spend, impressions, funding, or targeting fields. Those fields are returned as `null` or empty arrays when Meta does not disclose them.
+
+The current implementation always returns `languages: []`. Missing source platform data falls back to the requested platform filters, so `platformsList` alone is not proof of where an ad actually ran.
 
 ## API Example
 
@@ -173,7 +193,23 @@ console.log(`Got ${items.length} public ad records`);
 
 The Actor builds public Facebook Ad Library search URLs from keywords, advertiser names, or Page IDs, opens them in a Playwright browser, handles cookie consent, reads structured ad records from Meta's embedded public page payload when available, falls back to rendered ad cards, deduplicates by ad ID, normalizes fields, and writes clean records to the Apify dataset.
 
-If no ads are saved, the run fails with a clear message instead of appearing successful with an empty dataset.
+### Run coverage summary
+
+Read `FACEBOOK-RUN-SUMMARY` in the run's default key-value store alongside the dataset and run status. It reports aggregate and per-job counters with fixed reasons, not search terms, URLs, page HTML or raw errors:
+
+| Outcome | Meaning |
+| --- | --- |
+| `results` | Matched ads were observed and saved without a reported source gap or limit. This does **not** prove an exhaustive advertiser or historical archive. |
+| `empty` | Every planned search explicitly confirmed no-results in the matching loaded search scope, with no contradictory ad evidence. |
+| `partial` | Some usable matched ads were saved, but a terminal search failure or fatal save/crawl error leaves coverage incomplete. |
+| `limited` | A result/spending limit, stale-scroll stop or no-new-data condition bounded collection; remaining coverage is not established. Zero newly saved ads can be limited rather than empty. |
+| `failed` | Zero saved ads with a failed, unverified or unstarted search, or a fatal save/crawl error. Fatal errors after saving ads instead yield a `partial` summary and a failed Actor status. |
+
+Confirmed empty requires the requested query/Page ID and supported filter parameters to match the loaded Ad Library URL. The scoped `ad_library_main.search_results_connection` must contain `edges: []`, numeric `count: 0` and `page_info.has_next_page: false`, without source errors, conflicting payloads or observed ads. Missing cards, generic empty arrays and unrelated embedded ads do not establish no-results. Blocked pages and unverified searches without matched-ad or authoritative result evidence are retried; exhausted recovery becomes a terminal search failure.
+
+Matched duplicates, or authoritative result evidence with no newly accepted matches, can produce `limited` with reason `no_new_data`; they are not confirmed empty. A request that succeeds after retry does not count as a failed search. Stale scrolling and result/spending caps are limits, not proof that all ads were collected. Any crawl cap that leaves jobs unfinished must not be interpreted as exhaustive coverage.
+
+Read the Actor run status as well as the summary: terminal source gaps with usable rows can finish successfully with `partial`; a fatal save/crawl error fails the Actor even if saved rows yield a `partial` summary. Saved rows remain available. The summary is written after normal completion or handled crawl/save failures, but an abrupt kill, input/proxy or other pre-crawl initialization error, or failure to write the summary can leave it absent. None of the outcomes certifies an exhaustive archive (`exhaustiveArchive` remains `false`).
 
 ## Known Limits
 
@@ -181,6 +217,8 @@ If no ads are saved, the run fails with a clear message instead of appearing suc
 - Some fields are available only for issue, election, or political ads.
 - Commercial ads often do not disclose spend or impression ranges.
 - Very broad searches can return changing or personalized public result sets.
+- Saved results and scrolling stops do not establish exhaustive coverage. Search-page filters are not proof that every output field was independently verified.
+- Direct Ad Library search-URL inputs, ad-start date-window inputs and media-type filter inputs are not currently supported.
 - This Actor is not affiliated with Meta, Facebook, Instagram, or the Facebook Ad Library.
 
 ## Responsible Use

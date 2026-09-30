@@ -3,6 +3,7 @@ import { Actor } from 'apify';
 import { ActorInput } from './types.js';
 import { buildSearchUrl, normalizeActorInput } from './input.js';
 import { createRouter, SearchTarget } from './routes.js';
+import { RunReporter, SearchEvidenceError } from './reporting.js';
 
 Actor.main(async () => {
     const actorInput = (await Actor.getInput<ActorInput>()) ?? {};
@@ -58,6 +59,10 @@ Actor.main(async () => {
     }
 
     log.info('Built search URLs', { count: urls.length });
+    // Keyword and advertiser jobs may share a URL but use different predicates.
+    // Explicit keys prevent the request queue from silently dropping a job.
+    const requests = urls.map((request, index) => ({ ...request, uniqueKey: `facebook-search-${index}` }));
+    const reporter = new RunReporter(requests.map((request) => request.uniqueKey));
 
     const seenAdIds = new Set<string>();
     const maxPerQuery = input.maxResults;
@@ -72,7 +77,7 @@ Actor.main(async () => {
     const router = createRouter(seenAdIds, counters, {
         platforms: input.platforms,
         adStatus: input.adStatus,
-    });
+    }, reporter);
 
     const crawler = new PlaywrightCrawler({
         proxyConfiguration,
@@ -132,35 +137,43 @@ Actor.main(async () => {
             await router(context);
         },
         failedRequestHandler: async ({ request }, error) => {
-            log.error('Request failed', {
-                url: request.url,
-                error: (error as Error).message,
+            const reason = error instanceof SearchEvidenceError ? error.reason : 'request_failed';
+            reporter.finish(request.uniqueKey, 'failed', reason, request.retryCount);
+            log.error('Facebook search failed after recovery attempts.', {
+                jobId: request.uniqueKey,
+                reason,
                 retryCount: request.retryCount,
             });
         },
     });
 
-    await crawler.addRequests(urls);
-    await crawler.run();
+    let fatalReason: 'save_error' | 'crawl_error' | undefined;
+    try {
+        await crawler.addRequests(requests);
+        await crawler.run();
+    } catch {
+        fatalReason = 'crawl_error';
+        log.error('Facebook crawl stopped unexpectedly; preserving coverage counters.');
+    }
+    if (counters.saveErrorMessage) fatalReason = 'save_error';
+    const summary = {
+        ...reporter.summary({ spendingLimitReached: counters.spendingLimitReached, fatalReason }),
+        finishedAt: new Date().toISOString(),
+    };
+    await Actor.setValue('FACEBOOK-RUN-SUMMARY', summary);
 
     log.info('Scraping complete', {
         totalScraped: counters.totalScraped,
-        uniqueAds: seenAdIds.size,
+        outcome: summary.outcome,
+        failedSearches: summary.failedSearches,
+        limitedSearches: summary.limitedSearches,
     });
 
-    if (counters.saveErrorMessage) {
-        throw new Error(counters.saveErrorMessage);
+    if (fatalReason || summary.outcome === 'failed') {
+        throw new Error(`Facebook search failed (${fatalReason ?? 'unverified_or_failed_search'}). See FACEBOOK-RUN-SUMMARY for coverage counters.`);
     }
-
-    if (counters.totalScraped === 0 && !counters.spendingLimitReached) {
-        log.warning('No Facebook Ad Library ads were saved. The Actor will finish successfully because Meta can return no matches or block a proxy/session during automated checks. Try a broader keyword, Page ID, country, or status filter.', {
-            keywords: input.keywords,
-            pageIds: input.pageIds,
-            advertiserNames: input.advertiserNames,
-            country: input.country,
-            adStatus: input.adStatus,
-            adCategory: input.adCategory,
-        });
+    if (summary.outcome === 'partial' || summary.outcome === 'limited') {
+        log.warning('Facebook coverage is incomplete. Inspect FACEBOOK-RUN-SUMMARY before comparing runs or assuming no matches.');
     }
 
     await Actor.exit();

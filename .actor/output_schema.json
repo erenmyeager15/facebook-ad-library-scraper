@@ -9,6 +9,12 @@
       "title": "Facebook Ad Library records",
       "description": "Clean dataset items containing public ad creative, advertiser, date, country, platform, media, spend, impression, targeting summary, and URL data.",
       "template": "{{links.apiDefaultDatasetUrl}}/items"
+    },
+    "runSummary": {
+      "type": "string",
+      "title": "Run coverage summary",
+      "description": "Counters and fixed reason codes distinguishing observed results, confirmed empty searches, partial coverage, configured limits and failures. Not proof of an exhaustive archive.",
+      "template": "{{links.apiDefaultKeyValueStoreUrl}}/records/FACEBOOK-RUN-SUMMARY"
     }
   }
 }

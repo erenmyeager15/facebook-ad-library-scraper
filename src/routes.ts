@@ -3,6 +3,7 @@ import { log } from 'crawlee';
 import { Actor } from 'apify';
 import { wasPushedRecordSaved } from './billing.js';
 import { AdRecord } from './types.js';
+import { inspectSearchEvidence, RunReporter, SearchEvidence, SearchEvidenceError } from './reporting.js';
 
 interface RawAdLink {
     text: string;
@@ -296,11 +297,6 @@ function parseRange(text: string, pattern: RegExp): string | null {
     return match ? normalizeText(match[1]) : null;
 }
 
-function debugKey(searchQuery: string): string {
-    const safeQuery = searchQuery.replace(/[^a-z0-9]+/gi, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'search';
-    return `DEBUG_AD_LIBRARY_${safeQuery}_${Date.now()}`;
-}
-
 function toNulls<T extends Record<string, unknown>>(obj: T): T {
     const result = { ...obj } as Record<string, unknown>;
     for (const key of Object.keys(result)) {
@@ -591,18 +587,20 @@ async function extractAdCards(
     searchQuery: string,
     target: SearchTarget,
     seenAdIds: Set<string>,
-    input: { platforms: string[]; adStatus: 'active' | 'inactive' | 'all' }
+    input: { platforms: string[]; adStatus: 'active' | 'inactive' | 'all' },
+    inspection: { html: string; candidates: number; matchedCandidates: number }
 ): Promise<AdRecord[]> {
-    const html = await page.content();
-    const embeddedRecords = parseEmbeddedAdRecords(html, searchQuery, input.platforms)
+    const allEmbeddedRecords = parseEmbeddedAdRecords(inspection.html, searchQuery, input.platforms);
+    inspection.candidates += allEmbeddedRecords.length;
+    const matchedEmbeddedRecords = allEmbeddedRecords
         .filter((record) => (
             record.adId
-            && !seenAdIds.has(record.adId)
             && recordMatchesSearchTarget(record, target)
             && recordMatchesRequestedStatus(record, input.adStatus)
         ));
+    inspection.matchedCandidates += matchedEmbeddedRecords.length;
+    const embeddedRecords = matchedEmbeddedRecords.filter((record) => !seenAdIds.has(record.adId!));
     if (embeddedRecords.length) {
-        for (const record of embeddedRecords) seenAdIds.add(record.adId as string);
         log.info('Ad records found in embedded Meta payload', {
             searchQuery,
             records: embeddedRecords.length,
@@ -699,26 +697,16 @@ async function extractAdCards(
         searchQuery,
         candidates: rawCandidates.length,
     });
+    inspection.candidates += rawCandidates.length;
 
     if (!rawCandidates.length) {
-        const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
-        log.warning('No ad cards found in rendered DOM', {
-            searchQuery,
-            bodySnippet: normalizeText(bodyText)?.slice(0, 500) ?? null,
-        });
-
-        await Actor.setValue(debugKey(searchQuery), await page.content(), { contentType: 'text/html' }).catch((error) => {
-            log.warning('Failed to save debug HTML snapshot', { error: String(error) });
-        });
-
+        log.info('No new matched ad cards in rendered DOM; checking scoped search evidence.');
         return [];
     }
 
     const records: AdRecord[] = [];
 
     for (const candidate of rawCandidates) {
-        if (seenAdIds.has(candidate.adId)) continue;
-
         const links = candidate.links
             .map((link) => ({ text: normalizeText(link.text) ?? '', href: normalizeFacebookUrl(link.href) ?? '' }))
             .filter((link) => link.href);
@@ -816,8 +804,8 @@ async function extractAdCards(
         }) as unknown as AdRecord;
 
         if (recordMatchesSearchTarget(record, target) && recordMatchesRequestedStatus(record, input.adStatus)) {
-            seenAdIds.add(candidate.adId);
-            records.push(record);
+            inspection.matchedCandidates += 1;
+            if (!seenAdIds.has(candidate.adId)) records.push(record);
         }
     }
 
@@ -1106,17 +1094,38 @@ export function createRouter(
         spendingLimitReached: boolean;
         saveErrorMessage: string | null;
     },
-    input: { platforms: string[]; adStatus: 'active' | 'inactive' | 'all' }
+    input: { platforms: string[]; adStatus: 'active' | 'inactive' | 'all' },
+    reporter: RunReporter,
+    dependencies: {
+        wait?: (ms: number) => Promise<void>;
+        scroll?: typeof scrollToLoadMore;
+        pushData?: (record: AdRecord) => Promise<{ chargedCount: number; eventChargeLimitReached?: boolean }>;
+    } = {}
 ) {
     const router = Router.create<PlaywrightCrawlingContext>();
+    const wait = dependencies.wait ?? sleep;
+    const scroll = dependencies.scroll ?? scrollToLoadMore;
+    const pushData = dependencies.pushData ?? ((record: AdRecord) => Actor.pushData(record, 'ad-scraped'));
 
-    const searchHandler = async ({ request, page }: PlaywrightCrawlingContext): Promise<void> => {
+    const searchHandler = async ({ request, page, response }: PlaywrightCrawlingContext): Promise<void> => {
         const keyword = request.userData.keyword as string;
         const target = request.userData.target as SearchTarget;
+        const jobId = request.uniqueKey;
 
         if (counters.stopped) {
-            log.info('Scraping already stopped by the spending limit or a billing error; skipping', { keyword });
+            reporter.finish(jobId, counters.saveErrorMessage ? 'failed' : 'limited',
+                counters.saveErrorMessage ? 'save_error' : 'spending_limit', request.retryCount);
+            log.info('Scraping already stopped by the spending limit or a save error; skipping.');
             return;
+        }
+        const job = reporter.begin(jobId, request.retryCount);
+        // Saved counts survive handler retries: maxResults remains a per-job cap.
+        if (job.savedAds >= counters.maxPerQuery) {
+            reporter.finish(jobId, 'limited', 'max_results');
+            return;
+        }
+        if (response && response.status() >= 400) {
+            throw new SearchEvidenceError([401, 403, 429].includes(response.status()) ? 'blocked' : 'source_error');
         }
 
         log.info('Processing search page', {
@@ -1127,15 +1136,31 @@ export function createRouter(
 
         await dismissCookieConsent(page);
         await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => {});
-        await sleep(randomDelay());
+        await wait(randomDelay());
 
-        let queryScraped = 0;
+        let queryScraped = job.savedAds;
         let previousCount = queryScraped;
         let staleRounds = 0;
         const maxStaleRounds = 5;
+        let evidence: SearchEvidence = { kind: 'unknown', reason: 'unverified_zero' };
+        let observedCandidates = false;
+        let observedMatchedCandidates = false;
 
         while (!counters.stopped && queryScraped < counters.maxPerQuery && staleRounds < maxStaleRounds) {
-            const records = await extractAdCards(page, keyword, target, seenAdIds, input);
+            const html = await page.content();
+            evidence = inspectSearchEvidence(html, page.url(), request.url);
+            if (evidence.kind === 'blocked' || ['search_scope_changed', 'source_error'].includes(evidence.reason)) {
+                throw new SearchEvidenceError(evidence.reason);
+            }
+            const inspection = { html, candidates: 0, matchedCandidates: 0 };
+            const records = await extractAdCards(page, keyword, target, seenAdIds, input, inspection);
+            observedCandidates ||= inspection.candidates > 0;
+            observedMatchedCandidates ||= inspection.matchedCandidates > 0;
+            job.candidateScans += inspection.candidates;
+            if (evidence.kind === 'empty' && (observedCandidates || job.savedAds > 0)) {
+                // A placeholder or stale payload must not override actual ads.
+                evidence = { kind: 'unknown', reason: 'contradictory_payload' };
+            }
             log.info('Extracted records from current viewport', {
                 keyword,
                 records: records.length,
@@ -1144,15 +1169,22 @@ export function createRouter(
 
             for (const record of records) {
                 if (counters.stopped || queryScraped >= counters.maxPerQuery) break;
+                if (!record.adId || seenAdIds.has(record.adId)) continue;
+                // Reserve during the atomic push so concurrent jobs cannot save
+                // the same ad. Unsaved/capped records are never marked as seen.
+                seenAdIds.add(record.adId);
 
                 try {
                     // Push and charge together so records beyond the user's charge limit
                     // are not written to the dataset or scraped without revenue.
-                    const chargeResult = await Actor.pushData(record, 'ad-scraped');
+                    const chargeResult = await pushData(record);
                     const recordWasSaved = wasPushedRecordSaved(chargeResult);
                     if (recordWasSaved) {
                         counters.totalScraped += 1;
                         queryScraped += 1;
+                        job.savedAds += 1;
+                    } else {
+                        seenAdIds.delete(record.adId);
                     }
 
                     if (chargeResult?.eventChargeLimitReached) {
@@ -1162,10 +1194,9 @@ export function createRouter(
                         break;
                     }
                 } catch (chargeErr) {
-                    log.error('Unable to save and charge for ad; stopping to prevent unbilled work.', {
-                        error: String(chargeErr),
-                    });
-                    counters.saveErrorMessage = `Unable to save and charge for Facebook ad: ${String(chargeErr)}`;
+                    seenAdIds.delete(record.adId);
+                    log.error('Unable to save and charge for ad; stopping to prevent unbilled work.');
+                    counters.saveErrorMessage = 'Unable to save and charge for Facebook ad.';
                     counters.stopped = true;
                     break;
                 }
@@ -1182,14 +1213,34 @@ export function createRouter(
             }
             previousCount = queryScraped;
 
+            if (evidence.kind === 'empty' || (evidence.kind === 'exhausted' && observedCandidates)) break;
+
             if (!counters.stopped && queryScraped < counters.maxPerQuery) {
-                const scrolled = await scrollToLoadMore(page, queryScraped, counters.maxPerQuery);
+                const scrolled = await scroll(page, queryScraped, counters.maxPerQuery);
                 if (!scrolled && staleRounds > 0) {
                     break;
                 }
             }
         }
 
+        if (counters.saveErrorMessage) {
+            reporter.finish(jobId, 'failed', 'save_error');
+        } else if (counters.spendingLimitReached) {
+            reporter.finish(jobId, 'limited', 'spending_limit');
+        } else if (queryScraped >= counters.maxPerQuery) {
+            reporter.finish(jobId, 'limited', 'max_results');
+        } else if (evidence.kind === 'empty' && !observedCandidates && job.savedAds === 0) {
+            reporter.finish(jobId, 'empty', 'confirmed_empty');
+        } else if (evidence.kind === 'exhausted' && observedCandidates && job.savedAds > 0) {
+            reporter.finish(jobId, 'results', 'observed_results');
+        } else if (job.savedAds > 0 || observedMatchedCandidates
+            || (observedCandidates && (evidence.kind === 'results' || evidence.kind === 'exhausted'))) {
+            reporter.finish(jobId, 'limited', job.savedAds > 0 ? 'stale_scroll' : 'no_new_data');
+        } else {
+            // Let Crawlee retry the search; only failedRequestHandler records a
+            // terminal failure if all retry/session recovery attempts fail.
+            throw new SearchEvidenceError(evidence.reason);
+        }
         log.info('Finished page', { keyword, queryScraped, totalScraped: counters.totalScraped });
     };
 
