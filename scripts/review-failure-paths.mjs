@@ -101,7 +101,10 @@ try {
     const fixturePng = Buffer.from(pixel.split(',')[1], 'base64');
     for (const scenario of ['dom_unrelated_lazy_image', 'lazy_video_hydration',
         'ready_and_broken_preview', 'declared_video_dom_recovery',
-        'sparse_snapshot_dom_recovery', 'deferred_video_hydration']) {
+        'sparse_snapshot_dom_recovery', 'deferred_video_hydration',
+        'late_video_hydration', 'image_snapshot_dom_recovery',
+        'image_snapshot_collector_recovery', 'video_placeholder_hydration',
+        'unhydrated_video_placeholder']) {
         const context = await browser.newContext({ serviceWorkers: 'block' });
         const requestedImageIds = [];
         await context.route('**/*', async route => {
@@ -120,29 +123,40 @@ try {
             <img data-ad-id="${id}" width="300" height="180" ${lazy ? 'loading="lazy"' : ''}
                 src="https://fixture.invalid/preview/${id}.png">
             <a href="https://fixture.invalid/item/${id}">Shop Now</a></article>`;
-        const delayedSnapshot = ['declared_video_dom_recovery', 'sparse_snapshot_dom_recovery'].includes(scenario)
+        const delayedSnapshot = ['declared_video_dom_recovery', 'sparse_snapshot_dom_recovery',
+            'image_snapshot_dom_recovery', 'image_snapshot_collector_recovery'].includes(scenario)
             ? `<script type="application/json">${JSON.stringify({ ads: [{ ...ad,
                 snapshot: { page_name: 'Nike', body: { text: 'Nike fixture running shoes' },
                     ...(scenario === 'declared_video_dom_recovery'
                         ? { display_format: 'VIDEO', images: [{ original_image_url: 'https://fixture.invalid/preview/123456789.png' }] }
-                        : {}), },
+                        : scenario.startsWith('image_snapshot')
+                            ? { images: [{ original_image_url: 'https://fixture.invalid/preview/123456789.png' }] } : {}), },
             }] })}</script>` : '';
-        const brokenCard = scenario === 'ready_and_broken_preview' ? card('223456789') : '';
+        const placeholder = ['video_placeholder_hydration', 'unhydrated_video_placeholder'].includes(scenario)
+            ? '<button aria-label="Play video">Play</button>' : '';
+        const firstCard = card('123456789', scenario === 'lazy_video_hydration').replace('</article>', `${placeholder}</article>`);
+        const brokenCard = scenario === 'ready_and_broken_preview' ? card('223456789')
+            : scenario === 'unhydrated_video_placeholder' ? card('323456789') : '';
         const unrelated = scenario === 'dom_unrelated_lazy_image'
             ? '<img id="unrelated" loading="lazy" width="80" height="80" style="position:absolute;top:70000px" src="https://fixture.invalid/unrelated.png">' : '';
         const hydration = `<script>
             for (const image of document.querySelectorAll('img[data-ad-id]')) {
                 image.addEventListener('load', () => {
+                    if (${JSON.stringify(scenario)} === 'image_snapshot_collector_recovery'
+                        || (${JSON.stringify(scenario)} === 'unhydrated_video_placeholder' && image.dataset.adId === '123456789')) return;
                     const hydrate = () => {
                     const video = document.createElement('video');
                     video.preload = 'none'; video.src = 'https://fixture.invalid/video/' + image.dataset.adId + '.mp4';
                     video.poster = image.src; image.after(video);
                     };
-                    ${scenario === 'deferred_video_hydration' ? 'setTimeout(hydrate, 50);' : 'hydrate();'}
+                    ${scenario === 'deferred_video_hydration' ? 'setTimeout(hydrate, 50);'
+                        : ['late_video_hydration', 'image_snapshot_dom_recovery'].includes(scenario) ? 'setTimeout(hydrate, 750);'
+                            : scenario === 'video_placeholder_hydration' ? 'setTimeout(hydrate, 1500);' : 'hydrate();'}
                 }, {once:true});
             }
         </script>`;
-        await page.setContent(`<!doctype html><html><body>${card('123456789', scenario === 'lazy_video_hydration')}
+        const fixtureStartedAt = Date.now();
+        await page.setContent(`<!doctype html><html><body>${firstCard}
             ${brokenCard}${unrelated}${delayedSnapshot}${hydration}</body></html>`, { waitUntil: 'domcontentloaded' });
         const scopedPage = new Proxy(page, { get(target, prop) {
             if (prop === 'url') return () => searchUrl;
@@ -151,21 +165,25 @@ try {
         } });
         const rows = [];
         const reporter = new RunReporter(['dom-fixture']);
-        const counters = { totalScraped: 0, maxPerQuery: scenario === 'ready_and_broken_preview' ? 3 : 1,
+        const counters = { totalScraped: 0, maxPerQuery: ['ready_and_broken_preview', 'unhydrated_video_placeholder'].includes(scenario) ? 3 : 1,
             stopped: false, spendingLimitReached: false, saveErrorMessage: null };
         const router = createRouter(new Set(), counters, { platforms: ['facebook'], adStatus: 'active' }, reporter, {
-            wait: async () => {}, scroll: async () => false, readMedia: async () => new Map(),
+            wait: async () => {}, scroll: async () => false, readMedia: async () => scenario === 'image_snapshot_collector_recovery'
+                && Date.now() - fixtureStartedAt >= 800 ? new Map([['123456789', { adId: '123456789', imageUrls: [],
+                    videoUrl: 'https://fixture.invalid/video/123456789.mp4',
+                    videoThumbnailUrl: 'https://fixture.invalid/preview/123456789.png' }]]) : new Map(),
             pushData: async row => { rows.push(row); return { chargedCount: 1 }; },
         });
         await router({ request: new Request({ url: searchUrl, uniqueKey: 'dom-fixture', label: 'search',
             userData: { keyword: 'Nike', target: { kind: 'keyword', value: 'Nike' } } }),
             page: scopedPage, log, response: { status: () => 200 } });
         assert.equal(rows.length, 1, scenario);
-        assert.equal(rows[0].adId, '123456789', scenario);
+        const expectedId = scenario === 'unhydrated_video_placeholder' ? '323456789' : '123456789';
+        assert.equal(rows[0].adId, expectedId, scenario);
         assert.equal(rows[0].adType, 'video', scenario);
-        assert.equal(rows[0].videoUrl, 'https://fixture.invalid/video/123456789.mp4', scenario);
-        assert.equal(rows[0].videoThumbnailUrl, 'https://fixture.invalid/preview/123456789.png', scenario);
-        if (scenario === 'ready_and_broken_preview') {
+        assert.equal(rows[0].videoUrl, `https://fixture.invalid/video/${expectedId}.mp4`, scenario);
+        assert.equal(rows[0].videoThumbnailUrl, `https://fixture.invalid/preview/${expectedId}.png`, scenario);
+        if (['ready_and_broken_preview', 'unhydrated_video_placeholder'].includes(scenario)) {
             assert.equal(reporter.job('dom-fixture').reason, 'preview_unready');
             assert.equal(reporter.summary().outcome, 'limited');
         }

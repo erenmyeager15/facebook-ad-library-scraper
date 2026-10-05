@@ -68,7 +68,8 @@ test('bounds browser search concurrency and open pages without raising RAM', () 
     assert.deepEqual(FACEBOOK_BROWSER_LIMITS, { maxConcurrency: 1, maxOpenPagesPerBrowser: 1 });
 });
 
-test('preview readiness scopes polling to the bounded candidate batch', async () => {
+test('preview readiness scopes polling to the bounded candidate batch', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'] });
     let scans = 0;
     let waits = 0;
     const page = { evaluate: async (_fn: unknown, options: unknown) => {
@@ -79,11 +80,24 @@ test('preview readiness scopes polling to the bounded candidate batch', async ()
     }, waitForTimeout: async (ms: number) => {
         assert.ok(ms > 0 && ms <= 100);
         waits += 1;
+        t.mock.timers.tick(ms);
     } } as unknown as PlaywrightCrawlingContext['page'];
     const result = await waitForAdPreviews(page, { excludedAdIds: ['123456789'], maxCandidates: 25 });
     assert.deepEqual(result.pendingAdIds, []);
-    assert.equal(scans, 3);
-    assert.equal(waits, 2);
+    assert.equal(scans, 12);
+    assert.equal(waits, 11);
+});
+
+test('media-shape changes reset the preview settling window', async (t) => {
+    t.mock.timers.enable({ apis: ['Date'] });
+    let scans = 0;
+    const page = { evaluate: async () => {
+        scans += 1;
+        return { candidateAdIds: ['223456789'], pendingAdIds: [], mediaStateKey: scans < 5 ? 'image' : 'video' };
+    }, waitForTimeout: async (ms: number) => t.mock.timers.tick(ms) } as unknown as PlaywrightCrawlingContext['page'];
+    const result = await waitForAdPreviews(page);
+    assert.deepEqual(result.pendingAdIds, []);
+    assert.equal(scans, 15);
 });
 
 test('lost preview document reports a fixed reason rather than raw provider details', async () => {

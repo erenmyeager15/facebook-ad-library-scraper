@@ -28,6 +28,7 @@ export interface DomAdScan {
     candidateAdIds: string[];
     pendingAdIds: string[];
     hasMoreCandidates: boolean;
+    mediaStateKey?: string;
 }
 
 /** Self-contained browser callback shared by preview readiness and extraction. */
@@ -48,6 +49,7 @@ export function scanDomAdCards(options: DomAdScanOptions): DomAdScan {
     const mediaReadyIds = new Set(options.mediaReadyAdIds ?? []);
     const candidateAdIds: string[] = [];
     const pendingIds = new Set<string>();
+    const mediaStates: string[] = [];
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     let inspectedPreviews = 0;
     let hasMoreCandidates = false;
@@ -113,13 +115,27 @@ export function scanDomAdCards(options: DomAdScanOptions): DomAdScan {
         }
         if (previewPending) pendingIds.add(match[1]);
 
+        // A loaded poster is not proof that a video creative has hydrated.
+        // Keep an explicit video/player placeholder pending until both public
+        // media fields exist. Do not infer video from generic CTA text.
+        const videos = Array.from(chosen.querySelectorAll<HTMLVideoElement>('video'));
+        const playableVideo = videos.some(video => Boolean(video.getAttribute('src') || video.querySelector('source[src]')));
+        const videoPoster = videos.some(video => Boolean(video.getAttribute('poster')));
+        const playControl = Array.from(chosen.querySelectorAll<HTMLElement>('[aria-label], button, [role="button"]'))
+            .some(control => /^play(?:\s+video)?$/i.test(normalize(control.getAttribute('aria-label') || control.innerText)));
+        const videoPending = !mediaReady && (videos.length > 0 || playControl) && (!playableVideo || !videoPoster);
+        if (videoPending) pendingIds.add(match[1]);
+
         if (options.inspectPreviewsOnly) {
             candidateAdIds.push(match[1]);
+            // Only bounded structural readiness is returned, never creative
+            // text, URLs or raw page data during polling.
+            mediaStates.push(`${match[1]}:${videos.length}:${Number(playableVideo)}:${Number(videoPoster)}:${Number(playControl)}`);
             inspectedPreviews += 1;
             if (inspectedPreviews >= maxCandidates) break;
             continue;
         }
-        if (previewPending) continue;
+        if (previewPending || videoPending) continue;
 
         // Pending cards do not occupy a ready batch. A single additional ready
         // root signals that another batch can be drained before scrolling.
@@ -160,5 +176,6 @@ export function scanDomAdCards(options: DomAdScanOptions): DomAdScan {
             videoThumbnailUrls: videoThumbnailUrls.filter(Boolean),
         };
     });
-    return { candidates, candidateAdIds, pendingAdIds: [...pendingIds], hasMoreCandidates };
+    return { candidates, candidateAdIds, pendingAdIds: [...pendingIds], hasMoreCandidates,
+        mediaStateKey: mediaStates.join('|') };
 }

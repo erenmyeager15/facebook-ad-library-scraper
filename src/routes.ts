@@ -519,7 +519,12 @@ function parseAdCandidates(
         const declaredEmptyMedia = Array.isArray(snapshot.images) && Array.isArray(snapshot.videos)
             && images.length === 0 && videos.length === 0 && extraImages.length === 0
             && extraVideos.length === 0 && cards.length === 0 && adType === 'text';
-        if (videoUrls.length > 0 || (adType !== 'video' && (imageUrls.length > 0 || explicitText || declaredEmptyMedia))) {
+        const explicitImage = displayFormat === 'image' && imageUrls.length > 0
+            && Array.isArray(snapshot.videos) && videos.length === 0 && extraVideos.length === 0;
+        // An image URL alone may be an early video poster. It cannot skip DOM
+        // readiness unless the source explicitly identifies an image creative.
+        if (videoUrls.length > 0 && videoThumbnailUrls.length > 0
+            || (adType !== 'video' && (explicitImage || explicitText || declaredEmptyMedia))) {
             completeStructuredMedia.add(record);
         }
         records.push(record);

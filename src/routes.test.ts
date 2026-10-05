@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
     extractAdId,
+    hasCompleteStructuredMedia,
     normalizeFacebookUrl,
     parseEmbeddedAdRecords,
     parsePageIdFromUrl,
@@ -119,6 +120,20 @@ test('declared video snapshots are not misclassified as images when playable met
     assert.equal(records[0].adType, 'video');
     assert.equal(records[0].videoUrl, null);
     assert.equal(records[0].videoThumbnailUrl, 'https://cdn.example/preview.jpg');
+});
+
+test('image-only sparse payloads cannot bypass video hydration checks', () => {
+    const parse = (snapshot: Record<string, unknown>) => parseEmbeddedAdRecords(`<script type="application/json">${JSON.stringify({
+        ads: [{ ad_archive_id: '123456789', snapshot: { page_name: 'Nike', ...snapshot } }],
+    })}</script>`, 'Nike', ['facebook'])[0];
+    const images = [{ original_image_url: 'https://cdn.example/preview.jpg' }];
+    assert.equal(hasCompleteStructuredMedia(parse({ images })), false);
+    assert.equal(hasCompleteStructuredMedia(parse({ images, videos: [] })), false);
+    assert.equal(hasCompleteStructuredMedia(parse({ display_format: 'IMAGE', images, videos: [] })), true);
+    assert.equal(hasCompleteStructuredMedia(parse({ display_format: 'VIDEO',
+        videos: [{ video_sd_url: 'https://cdn.example/video.mp4' }] })), false);
+    assert.equal(hasCompleteStructuredMedia(parse({ display_format: 'VIDEO',
+        videos: [{ video_sd_url: 'https://cdn.example/video.mp4', video_preview_image_url: 'https://cdn.example/poster.jpg' }] })), true);
 });
 
 test('rejects unrelated embedded ads for keyword, advertiser, and page searches', () => {

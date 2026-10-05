@@ -18,6 +18,11 @@ export const FACEBOOK_BROWSER_LIMITS = {
     maxOpenPagesPerBrowser: 1,
 } as const;
 
+// An image load can precede player insertion or a source-data update. A
+// bounded quiet window is needed before treating an unknown image-only DOM
+// card as settled; explicit player placeholders remain pending separately.
+export const PREVIEW_MEDIA_SETTLE_MS = 1000;
+
 export async function blockMediaDownloads(
     blockRequests: PlaywrightCrawlingContext['blockRequests'],
 ): Promise<void> {
@@ -44,6 +49,7 @@ export async function waitForAdPreviews(
     try {
         const deadline = Date.now() + 5000;
         let settledBatch: string | null = null;
+        let settledSince = 0;
         while (true) {
             const state = await page.evaluate(scanDomAdCards, {
                 excludedAdIds: options.excludedAdIds ?? [],
@@ -53,14 +59,18 @@ export async function waitForAdPreviews(
                 // Activate only this bounded, unsaved batch, keeping the viewport.
                 activateLazy: true,
             });
-            const batch = JSON.stringify(state.candidateAdIds);
+            const batch = JSON.stringify([state.candidateAdIds, state.mediaStateKey]);
             if (state.pendingAdIds.length === 0) {
-                // Load listeners can schedule video hydration on the next task.
-                // Require the same ready batch on two separate observations.
-                if (state.candidateAdIds.length === 0 || batch === settledBatch) {
+                // Card IDs alone can remain unchanged while delayed player
+                // hydration changes the media shape. Require a quiet window.
+                if (state.candidateAdIds.length === 0 || batch === settledBatch
+                    && Date.now() - settledSince >= PREVIEW_MEDIA_SETTLE_MS) {
                     return { candidateAdIds: state.candidateAdIds, pendingAdIds: [] };
                 }
-                settledBatch = batch;
+                if (batch !== settledBatch) {
+                    settledBatch = batch;
+                    settledSince = Date.now();
+                }
             } else {
                 settledBatch = null;
             }
