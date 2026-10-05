@@ -7,6 +7,7 @@ import { RunReporter, SearchEvidenceError } from './reporting.js';
 import { blockMediaDownloads, FACEBOOK_BROWSER_LIMITS } from './performance.js';
 import { AdMediaCollector, createAdMediaCollector } from './media.js';
 import { classifySearchError, createPageWarmup, createSearchNavigation } from './navigation.js';
+import { installDomAdMediaCapture, readCapturedDomAdMedia } from './dom-media.js';
 
 Actor.main(async () => {
     const actorInput = (await Actor.getInput<ActorInput>()) ?? {};
@@ -78,6 +79,7 @@ Actor.main(async () => {
     };
 
     const pageMedia = new WeakMap<PlaywrightCrawlingContext['page'], AdMediaCollector>();
+    const pageSearchUrls = new WeakMap<PlaywrightCrawlingContext['page'], string>();
     const warmPage = createPageWarmup();
     const readSearch = createSearchNavigation({
         onRecovery: (diagnostic) => log.warning('Restoring the exact requested search after a scope reset', diagnostic),
@@ -87,7 +89,21 @@ Actor.main(async () => {
         platforms: input.platforms,
         adStatus: input.adStatus,
     }, reporter, {
-        readMedia: async (page) => await pageMedia.get(page)?.read() ?? new Map(),
+        readMedia: async (page) => {
+            const media = new Map(await pageMedia.get(page)?.read() ?? []);
+            const expected = pageSearchUrls.get(page);
+            const domMedia = expected ? await readCapturedDomAdMedia(page, expected) : new Map();
+            log.info('Public DOM video metadata available', {
+                observedAds: domMedia.size,
+                completeVideos: [...domMedia.values()].filter(value => value.videoUrl && value.videoThumbnailUrl).length,
+            });
+            for (const [id, value] of domMedia) {
+                const old = media.get(id);
+                media.set(id, { adId: id, imageUrls: old?.imageUrls.length ? old.imageUrls : value.imageUrls,
+                    videoUrl: old?.videoUrl || value.videoUrl, videoThumbnailUrl: old?.videoThumbnailUrl || value.videoThumbnailUrl });
+            }
+            return media;
+        },
         readSearch,
     });
 
@@ -116,6 +132,8 @@ Actor.main(async () => {
                 // Keep cache, CSS and source data requests working; only skip
                 // video/font binaries, retaining previews needed for hydration.
                 await blockMediaDownloads(blockRequests);
+                await installDomAdMediaCapture(page);
+                pageSearchUrls.set(page, request.url);
                 pageMedia.get(page)?.dispose();
                 pageMedia.set(page, createAdMediaCollector(page, request.url, maxPerQuery));
                 if (gotoOptions) {
