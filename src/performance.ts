@@ -1,5 +1,6 @@
 import type { PlaywrightCrawlingContext } from 'crawlee';
 import { SearchEvidenceError } from './reporting.js';
+import { scanDomAdCards } from './dom-cards.js';
 
 // Keep documents, JavaScript, GraphQL/fetch requests, CSS, icons and previews.
 // Initial cards can hydrate video elements only after a preview image loads.
@@ -25,20 +26,53 @@ export async function blockMediaDownloads(
     await blockRequests({ urlPatterns: [...BLOCKED_MEDIA_URL_PATTERNS] });
 }
 
-/** Let rendered previews finish before taking a DOM snapshot of initial cards. */
-export async function waitForAdPreviews(page: PlaywrightCrawlingContext['page']): Promise<void> {
+export interface PreviewReadinessOptions {
+    excludedAdIds?: string[];
+    maxCandidates?: number;
+}
+
+export interface PreviewReadiness {
+    candidateAdIds: string[];
+    pendingAdIds: string[];
+}
+
+/** Await only the current batch's ad previews; unrelated images never gate it. */
+export async function waitForAdPreviews(
+    page: PlaywrightCrawlingContext['page'],
+    options: PreviewReadinessOptions = {},
+): Promise<PreviewReadiness> {
     try {
-        const readiness = await page.waitForFunction(() => Array.from(document.images).every((image) => {
-            const box = image.getBoundingClientRect();
-            // The extractor can read rendered cards below the viewport too.
-            // Checking only visible previews would still misclassify that batch.
-            const renderedPreview = box.width >= 32 && box.height >= 32;
-            return !renderedPreview || image.complete;
-        }), undefined, { timeout: 5000, polling: 100 });
-        await readiness.dispose();
+        const deadline = Date.now() + 5000;
+        let settledBatch: string | null = null;
+        while (true) {
+            const state = await page.evaluate(scanDomAdCards, {
+                excludedAdIds: options.excludedAdIds ?? [],
+                maxCandidates: options.maxCandidates ?? 25,
+                inspectPreviewsOnly: true,
+                // Chromium does not request distant lazy previews until asked.
+                // Activate only this bounded, unsaved batch, keeping the viewport.
+                activateLazy: true,
+            });
+            const batch = JSON.stringify(state.candidateAdIds);
+            if (state.pendingAdIds.length === 0) {
+                // Load listeners can schedule video hydration on the next task.
+                // Require the same ready batch on two separate observations.
+                if (state.candidateAdIds.length === 0 || batch === settledBatch) {
+                    return { candidateAdIds: state.candidateAdIds, pendingAdIds: [] };
+                }
+                settledBatch = batch;
+            } else {
+                settledBatch = null;
+            }
+            if (Date.now() >= deadline) {
+                return { candidateAdIds: state.candidateAdIds,
+                    pendingAdIds: state.pendingAdIds.length ? state.pendingAdIds : state.candidateAdIds };
+            }
+            await page.waitForTimeout(Math.min(100, Math.max(1, deadline - Date.now())));
+        }
     } catch {
-        // Never silently save an image-only interpretation of a still-loading
-        // video card. Raw browser errors are not included in this fixed reason.
+        // A lost page/document is retryable. Ordinary image timeouts instead
+        // return pending IDs so ready siblings can still be saved accurately.
         throw new SearchEvidenceError('preview_unready');
     }
 }

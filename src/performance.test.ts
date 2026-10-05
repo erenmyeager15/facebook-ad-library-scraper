@@ -68,18 +68,26 @@ test('bounds browser search concurrency and open pages without raising RAM', () 
     assert.deepEqual(FACEBOOK_BROWSER_LIMITS, { maxConcurrency: 1, maxOpenPagesPerBrowser: 1 });
 });
 
-test('preview readiness has a five-second bound and releases its browser handle', async () => {
-    let disposed = false;
-    const page = { waitForFunction: async (_fn: unknown, _arg: unknown, options: unknown) => {
-        assert.deepEqual(options, { timeout: 5000, polling: 100 });
-        return { dispose: async () => { disposed = true; } };
+test('preview readiness scopes polling to the bounded candidate batch', async () => {
+    let scans = 0;
+    let waits = 0;
+    const page = { evaluate: async (_fn: unknown, options: unknown) => {
+        assert.deepEqual(options, { excludedAdIds: ['123456789'], maxCandidates: 25,
+            inspectPreviewsOnly: true, activateLazy: true });
+        scans += 1;
+        return { candidateAdIds: ['223456789'], pendingAdIds: scans === 1 ? ['223456789'] : [] };
+    }, waitForTimeout: async (ms: number) => {
+        assert.ok(ms > 0 && ms <= 100);
+        waits += 1;
     } } as unknown as PlaywrightCrawlingContext['page'];
-    await waitForAdPreviews(page);
-    assert.equal(disposed, true);
+    const result = await waitForAdPreviews(page, { excludedAdIds: ['123456789'], maxCandidates: 25 });
+    assert.deepEqual(result.pendingAdIds, []);
+    assert.equal(scans, 3);
+    assert.equal(waits, 2);
 });
 
-test('preview timeout reports a fixed reason rather than raw provider details', async () => {
-    const page = { waitForFunction: async () => { throw new Error('secret-preview-url'); } } as unknown as PlaywrightCrawlingContext['page'];
+test('lost preview document reports a fixed reason rather than raw provider details', async () => {
+    const page = { evaluate: async () => { throw new Error('secret-preview-url'); } } as unknown as PlaywrightCrawlingContext['page'];
     await assert.rejects(waitForAdPreviews(page), (error: unknown) => error instanceof SearchEvidenceError
         && error.reason === 'preview_unready' && !error.message.includes('secret'));
 });

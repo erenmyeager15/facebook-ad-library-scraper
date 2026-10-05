@@ -144,12 +144,17 @@ try {
         await router({ page: extractionPage, log, response: { status: () => 200 },
             request: new Request({ url: requestedUrl, label: 'search', uniqueKey: 'fixture',
                 userData: { keyword: 'Nike', target: { kind: 'keyword', value: 'Nike' } } }) });
-        assert.equal(rows.length, 25);
-        assert.equal(new Set(rows.map((row) => row.adId)).size, 25);
+        if (phase === 'aggressive-control') {
+            assert.ok(rows.length < 25, 'failed preview loads must defer incomplete cards');
+        } else {
+            assert.equal(rows.length, 25);
+        }
+        assert.equal(new Set(rows.map((row) => row.adId)).size, rows.length);
         const videoRecords = rows.filter((row) => row.videoUrl && row.videoThumbnailUrl).length;
         assert.equal(videoRecords, phase === 'aggressive-control' ? 0 : 5);
         phases[phase].videoRecords = videoRecords;
-        assert.equal(reporter.summary().jobs[0].reason, 'max_results');
+        assert.equal(reporter.summary().jobs[0].reason,
+            phase === 'aggressive-control' ? 'preview_unready' : 'max_results');
         phases[phase].rows = rows.map(({ scrapedAt, ...row }) => row);
         assert.equal(active.counts.script, 1, `${phase}: warm-up must not disable the script cache`);
         assert.equal(active.counts.css, 1, `${phase}: CSS must remain cached and available`);

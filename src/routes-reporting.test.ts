@@ -3,6 +3,7 @@ import test from 'node:test';
 import { log, PlaywrightCrawlingContext, Request } from 'crawlee';
 import { createRouter, RecoveredAdMedia } from './routes.js';
 import { RunReporter, SearchEvidenceError } from './reporting.js';
+import type { PreviewReadiness } from './performance.js';
 
 const url = 'https://www.facebook.com/ads/library/?q=Nike&country=US&active_status=active';
 const jobIds = ['facebook-search-0', 'facebook-search-1'];
@@ -10,7 +11,7 @@ const input = { platforms: ['facebook'], adStatus: 'active' as const };
 const jsonScript = (value: unknown): string => `<script type="application/json">${JSON.stringify(value)}</script>`;
 const ad = (id: string) => ({
     ad_archive_id: id, page_id: '15087023444', page_name: 'Nike',
-    snapshot: { page_name: 'Nike', body: { text: 'Nike running shoes' } },
+    snapshot: { page_name: 'Nike', body: { text: 'Nike running shoes' }, display_format: 'TEXT' },
 });
 const empty = jsonScript({
     ad_library_main: { search_results_connection: { edges: [], count: 0, page_info: { has_next_page: false } } },
@@ -27,7 +28,7 @@ const exhausted = jsonScript({
 function harness(options: { max?: number; jobs?: string[]; scroll?: () => Promise<boolean>;
     media?: ReadonlyMap<string, RecoveredAdMedia>;
     onMediaRead?: () => void;
-    waitPreviews?: () => Promise<void>;
+    waitPreviews?: () => Promise<PreviewReadiness | void>;
     push?: (id: string) => Promise<{ chargedCount: number; eventChargeLimitReached?: boolean }> } = {}) {
     let html = '<html>Loading</html>';
     let loadedUrl = url;
@@ -44,7 +45,7 @@ function harness(options: { max?: number; jobs?: string[]; scroll?: () => Promis
         url: () => loadedUrl,
         goto: async (value: string) => { recoveries += 1; loadedUrl = value; return { status: () => status }; },
         waitForLoadState: async () => {},
-        evaluate: async () => [],
+        evaluate: async () => ({ candidates: [], pendingAdIds: [], hasMoreCandidates: false }),
         locator: () => ({ first: () => ({ isVisible: async () => false }) }),
     } as unknown as PlaywrightCrawlingContext['page'];
     const router = createRouter(seen, counters, input, reporter, {
@@ -168,6 +169,44 @@ test('unready initial previews cannot be saved or charged as image-only ads', as
     await assert.rejects(h.run(), (error: unknown) => error instanceof SearchEvidenceError && error.reason === 'preview_unready');
     assert.deepEqual(h.savedIds, []);
     assert.equal(h.seen.size, 0);
+});
+
+test('complete structured video metadata remains usable while its preview is pending', async () => {
+    const videoAd = { ...ad('123456789'), snapshot: { page_name: 'Nike', display_format: 'VIDEO',
+        videos: [{ video_sd_url: 'https://video.xx.fbcdn.net/public.mp4',
+            video_preview_image_url: 'https://scontent.xx.fbcdn.net/public.jpg' }] } };
+    const h = harness({ max: 1, waitPreviews: async () => ({ candidateAdIds: ['123456789'], pendingAdIds: ['123456789'] }) });
+    h.setHtml(jsonScript({ ads: [videoAd] }));
+    await h.run();
+    assert.deepEqual(h.savedIds, ['123456789']);
+    assert.equal(h.reporter.job(jobIds[0]).reason, 'max_results');
+});
+
+test('a pending declared video cannot turn into a saved image-only row', async () => {
+    const videoAd = { ...ad('123456789'), snapshot: { page_name: 'Nike', display_format: 'VIDEO',
+        images: [{ original_image_url: 'https://scontent.xx.fbcdn.net/public.jpg' }] } };
+    const h = harness({ waitPreviews: async () => ({ candidateAdIds: ['123456789'], pendingAdIds: ['123456789'] }) });
+    h.setHtml(jsonScript({ ads: [videoAd] }));
+    await assert.rejects(h.run(), (error: unknown) => error instanceof SearchEvidenceError
+        && error.reason === 'preview_unready');
+    assert.deepEqual(h.savedIds, []);
+    assert.equal(h.seen.size, 0);
+});
+
+test('ready ads survive a pending sibling with explicit incomplete preview coverage', async () => {
+    const pendingAd = { ...ad('223456789'), snapshot: { page_name: 'Nike', display_format: 'VIDEO',
+        images: [{ original_image_url: 'https://scontent.xx.fbcdn.net/pending.jpg' }] } };
+    const h = harness({ max: 3, waitPreviews: async () => ({ candidateAdIds: ['223456789'], pendingAdIds: ['223456789'] }) });
+    h.setHtml(jsonScript({ ad_library_main: { search_results_connection: {
+        edges: [{ node: { collated_results: [ad('123456789'), pendingAd] } }], count: 2,
+        page_info: { has_next_page: false },
+    } } }));
+    await h.run();
+    assert.deepEqual(h.savedIds, ['123456789']);
+    assert.equal(h.reporter.job(jobIds[0]).outcome, 'limited');
+    assert.equal(h.reporter.job(jobIds[0]).reason, 'preview_unready');
+    assert.equal(h.reporter.summary().confirmedEmptySearches, 0);
+    assert.equal(h.seen.has('223456789'), false);
 });
 
 test('retry recovery stays one job with no terminal failure', async () => {

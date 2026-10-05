@@ -110,6 +110,17 @@ test('ignores malformed payloads and deduplicates embedded ads', () => {
     assert.equal(records[0].adId, '123456789');
 });
 
+test('declared video snapshots are not misclassified as images when playable metadata is delayed', () => {
+    const records = parseEmbeddedAdRecords(`<script type="application/json">${JSON.stringify({
+        ads: [{ ad_archive_id: '123456789', snapshot: { page_name: 'Nike',
+            display_format: 'VIDEO', images: [{ original_image_url: 'https://cdn.example/preview.jpg' }],
+            videos: [{ video_preview_image_url: 'https://cdn.example/preview.jpg' }] } }],
+    })}</script>`, 'Nike', ['facebook']);
+    assert.equal(records[0].adType, 'video');
+    assert.equal(records[0].videoUrl, null);
+    assert.equal(records[0].videoThumbnailUrl, 'https://cdn.example/preview.jpg');
+});
+
 test('rejects unrelated embedded ads for keyword, advertiser, and page searches', () => {
     const nikeRecord = {
         ...parseEmbeddedAdRecords(`<script type="application/json">${JSON.stringify({

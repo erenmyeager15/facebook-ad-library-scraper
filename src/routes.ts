@@ -5,22 +5,8 @@ import { wasPushedRecordSaved } from './billing.js';
 import { AdRecord } from './types.js';
 import { inspectSearchEvidence, RunReporter, SearchEvidence, SearchEvidenceError } from './reporting.js';
 import { createSearchNavigation } from './navigation.js';
-import { waitForAdPreviews } from './performance.js';
-
-interface RawAdLink {
-    text: string;
-    href: string;
-}
-
-interface RawAdCandidate {
-    adId: string;
-    text: string;
-    lines: string[];
-    links: RawAdLink[];
-    imageUrls: string[];
-    videoUrls: string[];
-    videoThumbnailUrls: string[];
-}
+import { PreviewReadiness, PreviewReadinessOptions, waitForAdPreviews } from './performance.js';
+import { RawAdLink, scanDomAdCards } from './dom-cards.js';
 
 interface EmbeddedAdCandidate {
     ad_archive_id?: unknown;
@@ -39,6 +25,13 @@ interface EmbeddedAdCandidate {
 export interface SearchTarget {
     kind: 'keyword' | 'advertiser' | 'page';
     value: string;
+}
+
+// Internal provenance is kept off dataset rows and collected with the records.
+// A sparse payload must not masquerade as a confirmed text-only creative.
+const completeStructuredMedia = new WeakSet<AdRecord>();
+export function hasCompleteStructuredMedia(record: AdRecord): boolean {
+    return completeStructuredMedia.has(record);
 }
 
 const CTA_TEXTS = new Set([
@@ -478,7 +471,7 @@ function parseAdCandidates(
         ]);
 
         const displayFormat = asString(snapshot.display_format)?.toLowerCase() ?? '';
-        const adType = videoUrls.length
+        const adType = videoUrls.length || videoThumbnailUrls.length || displayFormat === 'video'
             ? 'video'
             : cards.length > 1 || imageUrls.length > 1 || displayFormat === 'carousel' || displayFormat === 'dco'
                 ? 'carousel'
@@ -492,7 +485,7 @@ function parseAdCandidates(
         const impressions = asRecord(candidate.impressions_with_index);
         const fundingEntity = firstConcreteText(snapshot.byline, snapshot.disclaimer_label);
 
-        records.push(toNulls({
+        const record = toNulls({
             adId,
             advertiserPageName,
             advertiserPageId,
@@ -521,7 +514,15 @@ function parseAdCandidates(
             adLibraryUrl: `https://www.facebook.com/ads/library/?id=${adId}`,
             scrapedAt: new Date().toISOString(),
             searchQuery,
-        }) as unknown as AdRecord);
+        }) as unknown as AdRecord;
+        const explicitText = ['text', 'text_only', 'textonly'].includes(displayFormat);
+        const declaredEmptyMedia = Array.isArray(snapshot.images) && Array.isArray(snapshot.videos)
+            && images.length === 0 && videos.length === 0 && extraImages.length === 0
+            && extraVideos.length === 0 && cards.length === 0 && adType === 'text';
+        if (videoUrls.length > 0 || (adType !== 'video' && (imageUrls.length > 0 || explicitText || declaredEmptyMedia))) {
+            completeStructuredMedia.add(record);
+        }
+        records.push(record);
     }
 
     return records;
@@ -627,7 +628,16 @@ async function extractAdCards(
     target: SearchTarget,
     seenAdIds: Set<string>,
     input: { platforms: string[]; adStatus: 'active' | 'inactive' | 'all' },
-    inspection: { html: string; candidates: number; matchedCandidates: number }
+    inspection: {
+        html: string;
+        candidates: number;
+        matchedCandidates: number;
+        pendingAdIds?: Set<string>;
+        scannedAdIds?: Set<string>;
+        hasMoreCandidates?: boolean;
+        checkedAdIds?: string[];
+        mediaReadyAdIds?: ReadonlySet<string>;
+    }
 ): Promise<AdRecord[]> {
     const allEmbeddedRecords = parseEmbeddedAdRecords(inspection.html, searchQuery, input.platforms);
     inspection.candidates += allEmbeddedRecords.length;
@@ -638,8 +648,13 @@ async function extractAdCards(
             && recordMatchesRequestedStatus(record, input.adStatus)
         ));
     inspection.matchedCandidates += matchedEmbeddedRecords.length;
-    const embeddedRecords = matchedEmbeddedRecords.filter((record) => !seenAdIds.has(record.adId!));
-    if (embeddedRecords.length) {
+    const newEmbeddedRecords = matchedEmbeddedRecords.filter((record) => !seenAdIds.has(record.adId!));
+    const incompleteEmbeddedRecords = newEmbeddedRecords.filter((record) => (
+        !hasCompleteStructuredMedia(record) && !inspection.mediaReadyAdIds?.has(record.adId!)
+    ));
+    const incompleteEmbeddedById = new Map(incompleteEmbeddedRecords.map((record) => [record.adId!, record]));
+    const embeddedRecords = newEmbeddedRecords.filter((record) => !incompleteEmbeddedById.has(record.adId!));
+    if (embeddedRecords.length && incompleteEmbeddedRecords.length === 0) {
         log.info('Ad records found in embedded Meta payload', {
             searchQuery,
             records: embeddedRecords.length,
@@ -647,90 +662,24 @@ async function extractAdCards(
         return embeddedRecords;
     }
 
-    const rawCandidates = await page.evaluate((): RawAdCandidate[] => {
-        const normalize = (value: string | null | undefined): string => value?.replace(/\s+/g, ' ').trim() ?? '';
-        const linesFrom = (value: string): string[] => value
-            .split(/\r?\n/)
-            .map((line) => normalize(line))
-            .filter(Boolean);
-        const idRegex = /(?:Library\s+ID|ID):\s*(\d{5,})/i;
-        const idRegexGlobal = /(?:Library\s+ID|ID):\s*\d{5,}/gi;
-        const roots: Array<{ adId: string; root: HTMLElement }> = [];
-        const seenIds = new Set<string>();
-        const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
-
-        while (walker.nextNode() && roots.length < 250) {
-            const nodeText = walker.currentNode.textContent ?? '';
-            const match = nodeText.match(idRegex);
-            if (!match || seenIds.has(match[1])) continue;
-
-            let node = walker.currentNode.parentElement;
-            let chosen: HTMLElement | null = null;
-            let depth = 0;
-
-            while (node && node !== document.body && depth < 12) {
-                const text = normalize(node.innerText || node.textContent);
-                const idCount = text.match(idRegexGlobal)?.length ?? 0;
-                const rect = node.getBoundingClientRect();
-                const hasUsefulChildren = Boolean(node.querySelector('a[href], img, video, [style*="background-image"]'));
-
-                if (
-                    idCount === 1
-                    && text.length >= 60
-                    && text.length <= 12000
-                    && rect.width >= 240
-                    && rect.height >= 80
-                    && hasUsefulChildren
-                ) {
-                    chosen = node;
-                }
-
-                if (idCount > 1 || text.length > 12000) break;
-                node = node.parentElement;
-                depth++;
-            }
-
-            if (!chosen) {
-                chosen = walker.currentNode.parentElement?.closest('[role="article"], div') as HTMLElement | null;
-            }
-
-            if (chosen) {
-                seenIds.add(match[1]);
-                roots.push({ adId: match[1], root: chosen });
-            }
-        }
-
-        return roots.map(({ adId, root }) => {
-            const text = root.innerText || root.textContent || '';
-            const links = Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href]')).map((link) => ({
-                text: normalize(link.innerText || link.textContent),
-                href: link.href || link.getAttribute('href') || '',
-            })).filter((link) => link.href);
-            const imageUrls = Array.from(root.querySelectorAll<HTMLImageElement>('img')).map((img) => (
-                img.currentSrc || img.src || img.getAttribute('src') || ''
-            ));
-            const backgroundImageUrls = Array.from(root.querySelectorAll<HTMLElement>('[style*="background-image"]'))
-                .map((el) => {
-                    const bg = el.style.backgroundImage || window.getComputedStyle(el).backgroundImage;
-                    const match = bg.match(/url\(["']?(.+?)["']?\)/);
-                    return match?.[1] ?? '';
-                });
-            const videoUrls = Array.from(root.querySelectorAll<HTMLVideoElement | HTMLSourceElement>('video[src], video source[src]'))
-                .map((video) => video.getAttribute('src') || '');
-            const videoThumbnailUrls = Array.from(root.querySelectorAll<HTMLVideoElement>('video[poster]'))
-                .map((video) => video.poster || video.getAttribute('poster') || '');
-
-            return {
-                adId,
-                text,
-                lines: linesFrom(text),
-                links,
-                imageUrls: [...imageUrls, ...backgroundImageUrls].filter(Boolean),
-                videoUrls: videoUrls.filter(Boolean),
-                videoThumbnailUrls: videoThumbnailUrls.filter(Boolean),
-            };
-        });
+    const domBatch = await page.evaluate(scanDomAdCards, {
+        excludedAdIds: Array.from(inspection.scannedAdIds ?? []),
+        pendingAdIds: Array.from(inspection.pendingAdIds ?? []),
+        checkedAdIds: inspection.checkedAdIds,
+        mediaReadyAdIds: Array.from(inspection.mediaReadyAdIds ?? []),
+        maxCandidates: 250,
     });
+    const rawCandidates = domBatch.candidates;
+    const checkedAdIds = inspection.checkedAdIds ? new Set(inspection.checkedAdIds) : null;
+    const deferIncompleteRecord = (record: AdRecord): void => {
+        // An unchecked later DOM root needs its own readiness batch first.
+        // Marking it pending now would exclude it from that future batch.
+        if (!domBatch.hasMoreCandidates || !checkedAdIds || checkedAdIds.has(record.adId!)) {
+            inspection.pendingAdIds?.add(record.adId!);
+        }
+    };
+    for (const id of domBatch.pendingAdIds) inspection.pendingAdIds?.add(id);
+    inspection.hasMoreCandidates = domBatch.hasMoreCandidates;
 
     log.info('Ad card candidates found', {
         searchQuery,
@@ -739,11 +688,13 @@ async function extractAdCards(
     inspection.candidates += rawCandidates.length;
 
     if (!rawCandidates.length) {
+        for (const record of incompleteEmbeddedRecords) deferIncompleteRecord(record);
         log.info('No new matched ad cards in rendered DOM; checking scoped search evidence.');
-        return [];
+        return embeddedRecords;
     }
 
-    const records: AdRecord[] = [];
+    const records: AdRecord[] = [...embeddedRecords];
+    const recoveredEmbeddedIds = new Set<string>();
 
     for (const candidate of rawCandidates) {
         const links = candidate.links
@@ -812,7 +763,7 @@ async function extractAdCards(
             location: parseRange(candidate.text, /Locations?[:\s]+(.+?)(?:\n|$)/i),
         };
 
-        const record = toNulls({
+        let record = toNulls({
             adId: candidate.adId,
             advertiserPageName,
             advertiserPageId,
@@ -842,10 +793,41 @@ async function extractAdCards(
             searchQuery,
         }) as unknown as AdRecord;
 
+        const incompleteEmbedded = incompleteEmbeddedById.get(candidate.adId);
+        if (incompleteEmbedded) {
+            if (incompleteEmbedded.adType === 'video' && !record.videoUrl) {
+                inspection.pendingAdIds?.add(candidate.adId);
+                continue;
+            }
+            // Preserve the richer structured fields while repairing only media
+            // from the same hydrated DOM ad. A missing playable video stays
+            // deferred rather than being saved as an image-only creative.
+            const mergedImages = uniq([...incompleteEmbedded.imageUrls, ...record.imageUrls]);
+            record = {
+                ...incompleteEmbedded,
+                adType: ['video', 'carousel'].includes(incompleteEmbedded.adType ?? '')
+                    ? incompleteEmbedded.adType : record.adType,
+                imageUrl: incompleteEmbedded.imageUrl ?? record.imageUrl,
+                imageUrls: mergedImages,
+                videoUrl: incompleteEmbedded.videoUrl ?? record.videoUrl,
+                videoThumbnailUrl: incompleteEmbedded.videoThumbnailUrl ?? record.videoThumbnailUrl,
+            };
+            recoveredEmbeddedIds.add(candidate.adId);
+        }
+
+        // Include rejected cards and previously saved duplicates in progress.
+        // Otherwise either can occupy the first batch on every inspection and
+        // prevent matching cards farther down the document from being read.
+        inspection.scannedAdIds?.add(candidate.adId);
+
         if (recordMatchesSearchTarget(record, target) && recordMatchesRequestedStatus(record, input.adStatus)) {
             inspection.matchedCandidates += 1;
             if (!seenAdIds.has(candidate.adId)) records.push(record);
         }
+    }
+
+    for (const record of incompleteEmbeddedRecords) {
+        if (!recoveredEmbeddedIds.has(record.adId!)) deferIncompleteRecord(record);
     }
 
     return records;
@@ -1141,7 +1123,7 @@ export function createRouter(
         pushData?: (record: AdRecord) => Promise<{ chargedCount: number; eventChargeLimitReached?: boolean }>;
         readMedia?: (page: PlaywrightCrawlingContext['page']) => Promise<ReadonlyMap<string, RecoveredAdMedia>>;
         readSearch?: (page: PlaywrightCrawlingContext['page'], requestedUrl: string) => Promise<{ html: string; url: string }>;
-        waitPreviews?: (page: PlaywrightCrawlingContext['page']) => Promise<void>;
+        waitPreviews?: (page: PlaywrightCrawlingContext['page'], options?: PreviewReadinessOptions) => Promise<PreviewReadiness | void>;
     } = {}
 ) {
     const router = Router.create<PlaywrightCrawlingContext>();
@@ -1189,13 +1171,31 @@ export function createRouter(
         let evidence: SearchEvidence = { kind: 'unknown', reason: 'unverified_zero' };
         let observedCandidates = false;
         let observedMatchedCandidates = false;
+        const scannedAdIds = new Set<string>();
+        const unresolvedPreviewIds = new Set<string>();
 
         while (!counters.stopped && queryScraped < counters.maxPerQuery && staleRounds < maxStaleRounds) {
             // Scope recovery can navigate to a fresh document. Settle it before
             // readiness, then refresh HTML without allowing another navigation
             // that would invalidate the preview check.
-            await readSearch(page, request.url);
-            await waitPreviews(page);
+            const settled = await readSearch(page, request.url);
+            const initialMedia = await dependencies.readMedia?.(page);
+            const structuredRecords = parseEmbeddedAdRecords(settled.html, keyword, input.platforms)
+                .filter((record) => record.adId && recordMatchesSearchTarget(record, target)
+                    && recordMatchesRequestedStatus(record, input.adStatus));
+            // A complete structured creative does not depend on DOM hydration.
+            // A declared video without playable metadata still needs recovery.
+            const structuredMediaReady = structuredRecords.filter((record) => hasCompleteStructuredMedia(record))
+                .map((record) => record.adId!);
+            const recoveredVideoReady = [...(initialMedia ?? new Map<string, RecoveredAdMedia>())]
+                .filter(([, value]) => value.videoUrl && value.videoThumbnailUrl).map(([id]) => id);
+            const mediaReadyAdIds = new Set([...seenAdIds, ...structuredMediaReady, ...recoveredVideoReady]);
+            const previewReadiness = await waitPreviews(page, {
+                excludedAdIds: [...mediaReadyAdIds, ...scannedAdIds, ...unresolvedPreviewIds],
+                maxCandidates: Math.min(25, counters.maxPerQuery - queryScraped),
+            });
+            const pendingAdIds = new Set([...unresolvedPreviewIds, ...(previewReadiness?.pendingAdIds ?? [])]
+                .filter((id) => !mediaReadyAdIds.has(id)));
             const snapshotUrl = page.url();
             const html = await page.content();
             if (page.url() !== snapshotUrl) throw new SearchEvidenceError('navigation_interrupted');
@@ -1203,7 +1203,9 @@ export function createRouter(
             if (evidence.kind === 'blocked' || ['search_scope_changed', 'source_error'].includes(evidence.reason)) {
                 throw new SearchEvidenceError(evidence.reason);
             }
-            const inspection = { html, candidates: 0, matchedCandidates: 0 };
+            const inspection = { html, candidates: 0, matchedCandidates: 0,
+                pendingAdIds, scannedAdIds, hasMoreCandidates: false,
+                checkedAdIds: previewReadiness?.candidateAdIds, mediaReadyAdIds };
             const extracted = await extractAdCards(page, keyword, target, seenAdIds, input, inspection);
             const media = await dependencies.readMedia?.(page);
             // DOM/media awaits may cross a late client-side redirect. Never
@@ -1211,6 +1213,7 @@ export function createRouter(
             const currentScope = inspectSearchEvidence('', page.url(), request.url);
             if (currentScope.reason !== 'unverified_zero') throw new SearchEvidenceError(currentScope.reason);
             const records = extracted.map((record) => recoverAdMedia(record, record.adId ? media?.get(record.adId) : undefined));
+            for (const id of pendingAdIds) if (!seenAdIds.has(id)) unresolvedPreviewIds.add(id);
             observedCandidates ||= inspection.candidates > 0;
             observedMatchedCandidates ||= inspection.matchedCandidates > 0;
             job.candidateScans += inspection.candidates;
@@ -1229,6 +1232,9 @@ export function createRouter(
             for (const record of records) {
                 if (counters.stopped || queryScraped >= counters.maxPerQuery) break;
                 if (!record.adId || seenAdIds.has(record.adId)) continue;
+                // Complete matching structured metadata can settle an ID that
+                // was deferred while its preview was still loading.
+                if (pendingAdIds.has(record.adId) && !mediaReadyAdIds.has(record.adId)) continue;
                 // Reserve during the atomic push so concurrent jobs cannot save
                 // the same ad. Unsaved/capped records are never marked as seen.
                 seenAdIds.add(record.adId);
@@ -1242,6 +1248,7 @@ export function createRouter(
                         counters.totalScraped += 1;
                         queryScraped += 1;
                         job.savedAds += 1;
+                        unresolvedPreviewIds.delete(record.adId);
                     } else {
                         seenAdIds.delete(record.adId);
                     }
@@ -1263,6 +1270,14 @@ export function createRouter(
                 if (counters.totalScraped % 50 === 0) {
                     log.info('Progress', { totalScraped: counters.totalScraped, keyword });
                 }
+            }
+
+            // Drain already-loaded unseen batches before network/scroll waits.
+            // Rejected cards advance the batch too, so they cannot starve later
+            // matching results or consume the heuristic stale-round allowance.
+            if (!counters.stopped && queryScraped < counters.maxPerQuery && inspection.hasMoreCandidates) {
+                previousCount = queryScraped;
+                continue;
             }
 
             if (queryScraped === previousCount) {
@@ -1288,6 +1303,9 @@ export function createRouter(
             reporter.finish(jobId, 'limited', 'spending_limit');
         } else if (queryScraped >= counters.maxPerQuery) {
             reporter.finish(jobId, 'limited', 'max_results');
+        } else if (unresolvedPreviewIds.size > 0) {
+            if (job.savedAds === 0) throw new SearchEvidenceError('preview_unready');
+            reporter.finish(jobId, 'limited', 'preview_unready');
         } else if (evidence.kind === 'empty' && !observedCandidates && job.savedAds === 0) {
             reporter.finish(jobId, 'empty', 'confirmed_empty');
         } else if (evidence.kind === 'exhausted' && observedCandidates && job.savedAds > 0) {
