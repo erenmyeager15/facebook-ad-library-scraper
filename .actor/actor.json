@@ -30,7 +30,7 @@
         "apify-actor-start": {
           "eventTitle": "Actor Start",
           "eventDescription": "Charged when the Actor starts running. Number of events charged depends on Actor memory (one event per GB, minimum one event).",
-          "eventPriceUsd": 0.00005,
+          "eventPriceUsd": 0.001,
           "isPrimaryEvent": false,
           "isOneTimeEvent": true
         },
