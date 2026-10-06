@@ -6,7 +6,7 @@ import { createRouter, SearchTarget } from './routes.js';
 import { RunReporter, SearchEvidenceError } from './reporting.js';
 import { blockMediaDownloads, FACEBOOK_BROWSER_LIMITS } from './performance.js';
 import { AdMediaCollector, createAdMediaCollector } from './media.js';
-import { classifySearchError, createPageWarmup, createSearchNavigation } from './navigation.js';
+import { classifySearchError, createPageWarmup, createSearchNavigation, isBadExitError } from './navigation.js';
 import { installDomAdMediaCapture, readCapturedDomAdMedia } from './dom-media.js';
 
 Actor.main(async () => {
@@ -167,6 +167,17 @@ Actor.main(async () => {
             } catch (error) {
                 if (error instanceof SearchEvidenceError) lastSearchReason.set(context.request.uniqueKey, error.reason);
                 throw error;
+            }
+        },
+        errorHandler: async ({ session, request }, error) => {
+            // Retire the session (and with it the browser and proxy exit) on network/TLS
+            // failures so the next attempt gets a fresh residential IP immediately.
+            if (session && isBadExitError(error)) {
+                session.retire();
+                log.warning('Rotating to a fresh proxy session after a network-level navigation failure.', {
+                    jobId: request.uniqueKey,
+                    retryCount: request.retryCount,
+                });
             }
         },
         failedRequestHandler: async ({ request }, error) => {

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { Page } from 'playwright';
-import { classifySearchError, createPageWarmup, createSearchNavigation, scopeDiagnostic } from './navigation.js';
+import { classifySearchError, createPageWarmup, createSearchNavigation, isBadExitError, scopeDiagnostic } from './navigation.js';
 import { SearchEvidenceError } from './reporting.js';
 
 const url = 'https://www.facebook.com/ads/library/?q=Nike&country=US&active_status=active';
@@ -149,4 +149,27 @@ test('terminal navigation errors retain their own fixed reason rather than a sta
     assert.equal(classifySearchError(new Error('Target page, context or browser has been closed')), 'navigation_interrupted');
     assert.equal(classifySearchError(new Error('secret-unrelated-error')), 'request_failed');
     assert.equal(classifySearchError(new SearchEvidenceError('blocked')), 'blocked');
+});
+
+test('network and TLS failures from a bad proxy exit trigger session rotation', () => {
+    for (const message of [
+        'page.goto: net::ERR_CERT_COMMON_NAME_INVALID at https://www.facebook.com/ads/library/?q=Nike',
+        'page.goto: net::ERR_CERT_AUTHORITY_INVALID at https://www.facebook.com/ads/library/',
+        'page.goto: net::ERR_SSL_PROTOCOL_ERROR at https://www.facebook.com/ads/library/',
+        'page.goto: net::ERR_CONNECTION_RESET at https://www.facebook.com/ads/library/',
+        'page.goto: net::ERR_TIMED_OUT at https://www.facebook.com/ads/library/',
+        'page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://www.facebook.com/ads/library/',
+        'page.goto: Timeout 90000ms exceeded.',
+        'Navigation timed out after 90 seconds.',
+    ]) {
+        assert.equal(isBadExitError(new Error(message)), true, message);
+    }
+});
+
+test('Facebook content, scope and block errors do not rotate the proxy session', () => {
+    assert.equal(isBadExitError(new SearchEvidenceError('blocked')), false);
+    assert.equal(isBadExitError(new SearchEvidenceError('search_scope_changed')), false);
+    assert.equal(isBadExitError(new Error('Execution context was destroyed, most likely because of a navigation')), false);
+    assert.equal(isBadExitError(new Error('Facebook search failed (unverified_or_failed_search)')), false);
+    assert.equal(isBadExitError('net::ERR_CERT_COMMON_NAME_INVALID'), false);
 });

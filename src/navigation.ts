@@ -64,6 +64,18 @@ function isNavigationInterruption(error: unknown): boolean {
     return error instanceof Error && /execution context was destroyed|because (?:the page is|of a) navigat|frame was detached|target page, context or browser has been closed/i.test(error.message);
 }
 
+/**
+ * Chromium network/TLS failures that point at the proxy exit rather than at Facebook.
+ * Crawlee only rotates sessions for a short list of proxy errors, so without this the
+ * same bad residential IP (e.g. one that serves an invalid certificate) is reused until
+ * the session error score runs out, which can burn every retry of the search.
+ */
+const BAD_EXIT_ERROR = /net::ERR_(?:CERT_[A-Z_]+|SSL_[A-Z_]+|BAD_SSL_CLIENT_AUTH_CERT|CONNECTION_(?:CLOSED|RESET|REFUSED|FAILED|TIMED_OUT)|EMPTY_RESPONSE|TIMED_OUT|ADDRESS_UNREACHABLE|NAME_NOT_RESOLVED|PROXY_[A-Z_]+|TUNNEL_CONNECTION_FAILED|SOCKS_[A-Z_]+|HTTP2_PROTOCOL_ERROR|INTERNET_DISCONNECTED)\b|page\.goto: Timeout \d+ms exceeded|Navigation timed out/i;
+
+export function isBadExitError(error: unknown): boolean {
+    return error instanceof Error && BAD_EXIT_ERROR.test(error.message);
+}
+
 export function classifySearchError(error: unknown): SearchEvidenceError['reason'] {
     return error instanceof SearchEvidenceError ? error.reason
         : isNavigationInterruption(error) ? 'navigation_interrupted' : 'request_failed';
