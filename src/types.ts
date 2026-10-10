@@ -7,6 +7,9 @@ export interface ActorInput {
     adStatus?: 'active' | 'inactive' | 'all';
     platforms?: string[];
     maxResults?: number;
+    trackChanges?: boolean;
+    monitorName?: string;
+    observationHistoryLimit?: number;
     proxyConfiguration?: {
         useApifyProxy?: boolean;
         apifyProxyGroups?: string[];
@@ -46,6 +49,12 @@ export interface AdRecord {
     adLibraryUrl: string | null;
     scrapedAt: string;
     searchQuery: string;
+    monitorName?: string | null;
+    monitorStatus?: 'baseline' | 'newly_observed' | 'updated' | 'unchanged' | null;
+    firstSeenAt?: string | null;
+    previousSeenAt?: string | null;
+    changedFields?: string[];
+    observationCount?: number | null;
 }
 
 export const DEFAULT_INPUT: Required<Omit<ActorInput, 'proxyConfiguration'>> & { proxyConfiguration?: ActorInput['proxyConfiguration'] } = {
@@ -57,6 +66,9 @@ export const DEFAULT_INPUT: Required<Omit<ActorInput, 'proxyConfiguration'>> & {
     adStatus: 'active',
     platforms: ['facebook', 'instagram'],
     maxResults: 1,
+    trackChanges: false,
+    monitorName: '',
+    observationHistoryLimit: 10,
     proxyConfiguration: {
         useApifyProxy: true,
         apifyProxyGroups: ['RESIDENTIAL'],

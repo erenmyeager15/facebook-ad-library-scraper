@@ -16,6 +16,11 @@
           "spendRange",
           "adStartDate",
           "adEndDate",
+          "monitorStatus",
+          "firstSeenAt",
+          "previousSeenAt",
+          "changedFields",
+          "observationCount",
           "searchQuery",
           "adLibraryUrl",
           "scrapedAt"
@@ -57,6 +62,24 @@
           },
           "adEndDate": {
             "label": "Ended"
+          },
+          "monitorStatus": {
+            "label": "Monitor Status"
+          },
+          "firstSeenAt": {
+            "label": "First Seen",
+            "format": "date"
+          },
+          "previousSeenAt": {
+            "label": "Previous Seen",
+            "format": "date"
+          },
+          "changedFields": {
+            "label": "Changed Fields"
+          },
+          "observationCount": {
+            "label": "Observations",
+            "format": "number"
           },
           "searchQuery": {
             "label": "Search"

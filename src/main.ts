@@ -8,6 +8,7 @@ import { blockMediaDownloads, FACEBOOK_BROWSER_LIMITS } from './performance.js';
 import { AdMediaCollector, createAdMediaCollector } from './media.js';
 import { classifySearchError, createPageWarmup, createSearchNavigation, isBadExitError } from './navigation.js';
 import { installDomAdMediaCapture, readCapturedDomAdMedia } from './dom-media.js';
+import { finishMonitoring, initializeMonitoring, monitoringCounts, pushAdRecord } from './records.js';
 
 Actor.main(async () => {
     const actorInput = (await Actor.getInput<ActorInput>()) ?? {};
@@ -35,6 +36,8 @@ Actor.main(async () => {
     const proxyConfiguration = effectiveProxy
         ? await Actor.createProxyConfiguration(effectiveProxy)
         : undefined;
+
+    await initializeMonitoring(input);
 
     const urls: Array<{ url: string; label: string; userData: { keyword: string; target: SearchTarget } }> = [];
 
@@ -89,6 +92,7 @@ Actor.main(async () => {
         platforms: input.platforms,
         adStatus: input.adStatus,
     }, reporter, {
+        pushData: pushAdRecord,
         readMedia: async (page) => {
             const media = new Map(await pageMedia.get(page)?.read() ?? []);
             const expected = pageSearchUrls.get(page);
@@ -201,8 +205,15 @@ Actor.main(async () => {
         log.error('Facebook crawl stopped unexpectedly; preserving coverage counters.');
     }
     if (counters.saveErrorMessage) fatalReason = 'save_error';
+    const runSummary = reporter.summary({ spendingLimitReached: counters.spendingLimitReached, fatalReason });
+    await finishMonitoring(!fatalReason && runSummary.failedSearches === 0);
     const summary = {
-        ...reporter.summary({ spendingLimitReached: counters.spendingLimitReached, fatalReason }),
+        ...runSummary,
+        monitoring: {
+            enabled: input.trackChanges,
+            ...monitoringCounts,
+            note: 'Newly observed means first seen inside this monitor after its baseline. Missing ads are never inferred to be stopped, and partial source coverage can hide ads.',
+        },
         finishedAt: new Date().toISOString(),
     };
     await Actor.setValue('FACEBOOK-RUN-SUMMARY', summary);

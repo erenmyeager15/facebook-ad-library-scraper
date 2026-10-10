@@ -12,10 +12,22 @@ test('normalizes empty input to a one-result residential sample', () => {
     assert.equal(input.adStatus, 'active');
     assert.deepEqual(input.platforms, ['facebook', 'instagram']);
     assert.equal(input.maxResults, 1);
+    assert.equal(input.trackChanges, false);
+    assert.equal(input.monitorName, '');
+    assert.equal(input.observationHistoryLimit, 10);
     assert.deepEqual(input.proxyConfiguration, {
         useApifyProxy: true,
         apifyProxyGroups: ['RESIDENTIAL'],
     });
+});
+
+test('validates and bounds persistent monitoring input', () => {
+    const input = normalizeActorInput({ trackChanges: true, monitorName: ' US competitors ', observationHistoryLimit: 100 });
+    assert.equal(input.trackChanges, true);
+    assert.equal(input.monitorName, 'US competitors');
+    assert.equal(input.observationHistoryLimit, 30);
+    assert.throws(() => normalizeActorInput({ trackChanges: true, monitorName: '' }), /monitorName/);
+    assert.throws(() => normalizeActorInput({ trackChanges: true, monitorName: 'bad/name' }), /monitorName/);
 });
 
 test('cleans filters, clamps max results, and preserves explicit proxy-off input', () => {

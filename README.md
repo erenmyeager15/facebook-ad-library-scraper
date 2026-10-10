@@ -1,6 +1,8 @@
-# Facebook Ad Library Scraper - Competitor Ads, Creatives & Spend
+# Facebook Ad Library Scraper - Competitor Ad Monitoring
 
 Scrape public ads from the Facebook Ad Library and turn them into structured datasets for competitor research, creative analysis, political ad monitoring, and brand tracking. Export results to JSON, CSV, Excel, or HTML, or pull them through the Apify API.
+
+For recurring US competitor monitoring, enable `trackChanges`, choose a stable `monitorName`, and schedule the same Page ID search. The first successful snapshot becomes the baseline. Later rows are labeled `newly_observed`, `updated`, or `unchanged`, with changed public fields and bounded history timestamps included in the dataset. Monitoring uses the existing ad event—there is no extra diff event.
 
 The Actor works with public Facebook Ad Library pages. It does not require a Facebook login, password, or private API key.
 
@@ -21,6 +23,7 @@ For a low-cost first run, use the default sample input: `Nike`, `US`, active ads
 - Funding entity and paid-for-by text for eligible issue/political ads
 - Public targeting summary when visible
 - Search query and scrape timestamp
+- Optional monitor status, first/previous seen timestamps, changed fields, and observation count
 
 ## Use Cases
 
@@ -29,6 +32,7 @@ For a low-cost first run, use the default sample input: `Nike`, `US`, active ads
 - Political and issue-ad transparency research
 - Spend and impression range analysis where Meta discloses those fields
 - Tracking public messaging, calls to action, and campaign landing pages
+- Scheduled US competitor watches that distinguish newly observed and updated creatives
 
 ## Pricing
 
@@ -54,6 +58,8 @@ Owner check on 30 September 2026: [candidate build 1.0.20](https://console.apify
 
 Failed, blocked, duplicate, or empty records are not charged as `ad-scraped` events. The Actor stops further ad extraction and saving once Apify reports that the event-charge limit has been reached. This is not a guaranteed all-in cap on separately billed platform usage; in-flight browser work and cleanup can still incur usage costs.
 
+Change annotations do not add a paid event. A tracked row uses the same `ad-scraped` event as an ordinary row. Persistent history is isolated by account, Actor and monitor name, bounded to 5,000 ads and 2-30 observations per ad.
+
 An empty or failed run can still incur its start-event and platform-usage costs; ads saved before a partial failure still incur ad-event fees. The table explains existing fees, not a pricing or resource-setting change.
 
 To control cost, start with one search term or one Page ID, one country, active ads, and `maxResults: 1`. Increase volume only after the sample output looks right. Residential proxy is recommended for Facebook reliability.
@@ -70,6 +76,9 @@ To control cost, start with one search term or one Page ID, one country, active 
 | `adStatus` | string | `active` | `active`, `inactive`, or `all`. |
 | `platforms` | string array | `["facebook", "instagram"]` | Meta platforms to include. |
 | `maxResults` | integer | `1` | Maximum ads to save per search query, up to 1000. |
+| `trackChanges` | boolean | `false` | Persist private history and annotate comparable scheduled runs. |
+| `monitorName` | string | empty | Required with tracking; reuse the same name on every scheduled run. |
+| `observationHistoryLimit` | integer | `10` | Retained observations per ad, from 2 to 30. |
 | `proxyConfiguration` | object | Residential | Apify Proxy settings. |
 
 The Actor rejects runs with more than 10 total keyword, Page ID, and advertiser-name searches so accidental broad inputs do not create expensive or confusing jobs.
@@ -94,6 +103,33 @@ The Actor rejects runs with more than 10 total keyword, Page ID, and advertiser-
 ```
 
 Live Store example: [Find 10 Active Ads Mentioning Nike in the US](https://apify.com/fascinating_lentil/facebook-ad-library-scraper/examples/track-active-nike-ads-in-the-us). Keyword searches can include ads from retailers and other advertisers that mention the brand; use a numeric Page ID when you need ads from one exact Facebook Page.
+
+### Scheduled US competitor monitor
+
+Use a numeric Page ID when possible. It is more precise than a broad keyword and makes a repeated bounded window easier to interpret.
+
+```json
+{
+  "keywords": [],
+  "pageIds": ["15087023444"],
+  "advertiserNames": [],
+  "country": "US",
+  "adStatus": "active",
+  "platforms": ["facebook", "instagram"],
+  "maxResults": 100,
+  "trackChanges": true,
+  "monitorName": "nike-us-active-ads",
+  "observationHistoryLimit": 10,
+  "proxyConfiguration": {
+    "useApifyProxy": true,
+    "apifyProxyGroups": ["RESIDENTIAL"]
+  }
+}
+```
+
+Run the same input on a daily or weekly Apify Schedule. `newly_observed` means the ad first appeared inside this monitor after its baseline; it does not prove the ad was launched that day. `updated` is based on stable public content and delivery fields. Rotating CDN query tokens alone do not create an update. Missing ads are never labeled stopped because Facebook can return partial or reordered coverage.
+
+A monitor name is locked to its original searches, country, category, status, platforms, and result limit. If those settings change, use a new monitor name so unrelated snapshots cannot be compared accidentally.
 
 ### Page ID search
 
@@ -143,6 +179,12 @@ The following JSON is a synthetic schema illustration, not a live scrape or a te
   "videoUrl": null,
   "adStartDate": "2026-06-10",
   "adEndDate": null,
+  "monitorName": "nike-us-active-ads",
+  "monitorStatus": "newly_observed",
+  "firstSeenAt": "2026-10-10T10:00:00.000Z",
+  "previousSeenAt": null,
+  "changedFields": [],
+  "observationCount": 1,
   "impressionsRange": null,
   "spendRange": null,
   "countriesRunningIn": ["US"],

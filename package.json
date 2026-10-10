@@ -22,5 +22,10 @@
     },
     "devDependencies": {
         "typescript": "^5.5.0"
+    },
+    "overrides": {
+        "get-uri": {
+            "basic-ftp": "6.2.3"
+        }
     }
 }

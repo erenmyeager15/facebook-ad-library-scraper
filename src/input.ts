@@ -43,6 +43,12 @@ export function normalizeActorInput(actorInput: ActorInput | null | undefined): 
         }
     }
 
+    const trackChanges = input.trackChanges === true;
+    const monitorName = typeof input.monitorName === 'string' ? input.monitorName.trim().replace(/\s+/g, ' ') : '';
+    if (trackChanges && !/^[a-zA-Z0-9][a-zA-Z0-9 _-]{0,63}$/.test(monitorName)) {
+        throw new Error('Set monitorName to 1-64 letters, numbers, spaces, underscores or hyphens when trackChanges is enabled.');
+    }
+
     return {
         keywords,
         pageIds,
@@ -52,8 +58,18 @@ export function normalizeActorInput(actorInput: ActorInput | null | undefined): 
         adStatus: normalizeEnum(input.adStatus, ALLOWED_STATUSES, DEFAULT_INPUT.adStatus),
         platforms: normalizePlatforms(input.platforms),
         maxResults: normalizeMaxResults(input.maxResults),
+        trackChanges,
+        monitorName,
+        observationHistoryLimit: normalizeHistoryLimit(input.observationHistoryLimit),
         proxyConfiguration: normalizeProxyConfiguration(input.proxyConfiguration),
     };
+}
+
+function normalizeHistoryLimit(value: unknown): number {
+    if (value === null || value === undefined || value === '') return DEFAULT_INPUT.observationHistoryLimit;
+    const number = Number(value);
+    if (!Number.isFinite(number)) throw new Error('Observation history limit must be a number.');
+    return Math.max(2, Math.min(30, Math.floor(number)));
 }
 
 export function buildSearchUrl(keyword: string, input: NormalizedActorInput, pageId?: string): string {

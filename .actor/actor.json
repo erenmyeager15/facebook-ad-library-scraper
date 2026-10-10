@@ -1,8 +1,8 @@
 {
   "actorSpecification": 1,
   "name": "facebook-ad-library-scraper",
-  "title": "Facebook Ad Library Scraper - Competitor Ads & Creatives",
-  "description": "Scrape public Facebook Ad Library ads with creative text, headlines, media URLs, run dates, spend ranges, impressions, and advertiser page data.",
+  "title": "Facebook Ad Library Scraper - Competitor Ad Monitor",
+  "description": "Monitor public US and global Facebook Ad Library ads. Export creatives, media, dates, spend and impression ranges, plus persistent baseline, newly observed, updated, and unchanged status.",
   "version": "1.0",
   "readme": "../README.md",
   "input": "../INPUT_SCHEMA.json",

@@ -80,6 +80,29 @@
       "maximum": 1000,
       "editor": "number"
     },
+    "trackChanges": {
+      "title": "Track ads across scheduled runs",
+      "description": "Add baseline, newly observed, updated, or unchanged status using private persistent history. Missing ads are never labeled stopped because source coverage can be partial.",
+      "type": "boolean",
+      "default": false,
+      "editor": "checkbox"
+    },
+    "monitorName": {
+      "title": "Monitor name",
+      "description": "Required when tracking is enabled. Reuse the same 1-64 character name for comparable scheduled runs, for example us-running-shoes.",
+      "type": "string",
+      "default": "",
+      "editor": "textfield"
+    },
+    "observationHistoryLimit": {
+      "title": "Observations retained per ad",
+      "description": "Private bounded history retained per ad for this monitor.",
+      "type": "integer",
+      "default": 10,
+      "minimum": 2,
+      "maximum": 30,
+      "editor": "number"
+    },
     "proxyConfiguration": {
       "title": "Proxy configuration",
       "description": "Proxy settings for the crawler. Residential proxy is recommended for Facebook Ad Library reliability.",
