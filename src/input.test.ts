@@ -86,5 +86,6 @@ test('builds keyword and page search URLs', () => {
     assert.equal(keywordUrl.searchParams.get('publisher_platforms[0]'), 'facebook');
     assert.equal(keywordUrl.searchParams.get('publisher_platforms[1]'), 'instagram');
     assert.equal(pageUrl.searchParams.get('view_all_page_id'), '123456789');
+    assert.equal(pageUrl.searchParams.get('search_type'), 'page');
     assert.equal(pageUrl.searchParams.has('q'), false);
 });

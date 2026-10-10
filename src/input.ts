@@ -84,6 +84,10 @@ export function buildSearchUrl(keyword: string, input: NormalizedActorInput, pag
 
     if (pageId) {
         params.set('view_all_page_id', pageId);
+        // Meta canonicalizes exact Page ID searches with this parameter. Add it
+        // up front so the strict scope guard does not reject the same search
+        // after Facebook rewrites the URL.
+        params.set('search_type', 'page');
     } else if (keyword) {
         params.set('q', keyword);
         params.set('search_type', 'keyword_unordered');

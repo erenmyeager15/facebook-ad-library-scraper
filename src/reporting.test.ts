@@ -93,7 +93,7 @@ test('requested query, page ID and every supported filter must match loaded URL 
     const missingQuery = new URL(requestedUrl);
     missingQuery.searchParams.delete('q');
     assert.equal(inspect(mainPayload(), missingQuery.href).kind, 'unknown');
-    const pageUrl = 'https://www.facebook.com/ads/library/?view_all_page_id=123456789&country=US';
+    const pageUrl = 'https://www.facebook.com/ads/library/?view_all_page_id=123456789&country=US&search_type=page';
     const wrongPageUrl = pageUrl.replace('123456789', '987654321');
     assert.equal(inspectSearchEvidence(script(mainPayload()), wrongPageUrl, pageUrl).kind, 'unknown');
 });
