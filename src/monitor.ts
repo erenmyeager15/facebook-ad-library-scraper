@@ -32,21 +32,43 @@ export const emptyMonitor = (configuration = 'unconfigured'): MonitorState => ({
 });
 const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 
+function stableDate(value: string | null): string | null {
+    if (!value) return null;
+    const isoDate = value.trim().match(/^(\d{4}-\d{2}-\d{2})(?:$|[T\s])/);
+    if (isoDate) return isoDate[1];
+    const parsed = Date.parse(value);
+    if (!Number.isFinite(parsed)) return value.trim().toLowerCase();
+    const date = new Date(parsed);
+    return [date.getFullYear(), String(date.getMonth() + 1).padStart(2, '0'), String(date.getDate()).padStart(2, '0')].join('-');
+}
+
+function stableDestinationDomain(value: string | null): string | null {
+    if (!value) return null;
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' || url.protocol === 'http:' ? url.hostname.toLowerCase() : null;
+    } catch {
+        return null;
+    }
+}
+
 function stableSnapshot(record: AdRecord): Record<string, unknown> {
     return {
         adCreativeText: record.adCreativeText,
         adHeadline: record.adHeadline,
         adDescription: record.adDescription,
         ctaButtonText: record.ctaButtonText,
-        destinationUrl: record.destinationUrl,
+        // Dynamic catalog ads can rotate product/SKU paths on every render.
+        // A domain change is stable and meaningful; a product variant is not.
+        destinationDomain: stableDestinationDomain(record.destinationUrl),
         adType: record.adType,
         mediaShape: {
             imageCount: record.imageUrls.length,
             hasImage: Boolean(record.imageUrl || record.imageUrls.length),
             hasVideo: Boolean(record.videoUrl || record.videoThumbnailUrl),
         },
-        adStartDate: record.adStartDate,
-        adEndDate: record.adEndDate,
+        adStartDate: stableDate(record.adStartDate),
+        adEndDate: stableDate(record.adEndDate),
         impressionsRange: record.impressionsRange,
         spendRange: record.spendRange,
         countriesRunningIn: [...record.countriesRunningIn].sort(),

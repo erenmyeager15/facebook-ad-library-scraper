@@ -127,7 +127,7 @@ Use a numeric Page ID when possible. It is more precise than a broad keyword and
 }
 ```
 
-Run the same input on a daily or weekly Apify Schedule. `newly_observed` means the ad first appeared inside this monitor after its baseline; it does not prove the ad was launched that day. `updated` is based on stable public content and delivery fields. Rotating CDN query tokens alone do not create an update. Missing ads are never labeled stopped because Facebook can return partial or reordered coverage.
+Run the same input on a daily or weekly Apify Schedule. `newly_observed` means the ad first appeared inside this monitor after its baseline; it does not prove the ad was launched that day. `updated` is based on stable public content and delivery fields. Rotating CDN query tokens, localized formatting of the same date, and dynamic-catalog product paths on the same landing domain do not create an update. Missing ads are never labeled stopped because Facebook can return partial or reordered coverage.
 
 A monitor name is locked to its original searches, country, category, status, platforms, and result limit. If those settings change, use a new monitor name so unrelated snapshots cannot be compared accidentally.
 

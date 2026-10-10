@@ -53,10 +53,12 @@ test('stable ads are unchanged and meaningful public fields identify updates', (
     prepareAdChange(ad(), state, options).commit();
     completeMonitorRun(state);
     const unchanged = prepareAdChange(ad('123', { scrapedAt: '2026-10-11T10:00:00.000Z',
+        adStartDate: 'Oct 1, 2026',
+        destinationUrl: 'https://www.nike.com/another-catalog-variant?tracking=rotated',
         imageUrl: 'https://scontent.xx.fbcdn.net/a.jpg?token=rotated',
         imageUrls: ['https://scontent.xx.fbcdn.net/a.jpg?token=rotated'] }), state, options).record;
-    assert.equal(unchanged.monitorStatus, 'unchanged');
     assert.deepEqual(unchanged.changedFields, []);
+    assert.equal(unchanged.monitorStatus, 'unchanged');
     const updated = prepareAdChange(ad('123', { scrapedAt: '2026-10-12T10:00:00.000Z',
         adHeadline: 'Holiday running sale', spendRange: '$1K-$5K' }), state, options).record;
     assert.equal(updated.monitorStatus, 'updated');
