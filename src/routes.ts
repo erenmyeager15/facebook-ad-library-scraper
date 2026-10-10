@@ -587,6 +587,18 @@ export function recordMatchesSearchTarget(record: AdRecord, target: SearchTarget
     return searchable.some((value) => value.includes(expected));
 }
 
+/**
+ * Exact Page ID searches are already protected by the strict loaded-URL scope
+ * check. Meta's current rendered cards can omit the Page ID from their public
+ * profile links, so a DOM result in that verified scope may inherit the
+ * requested Page ID. Embedded/preloaded records continue to require their own
+ * observed Page ID and never use this fallback.
+ */
+export function scopedDomPageId(observedPageId: string | null, target: SearchTarget): string | null {
+    if (observedPageId) return observedPageId;
+    return target.kind === 'page' && /^\d{5,}$/.test(target.value) ? target.value : null;
+}
+
 export function recordMatchesRequestedStatus(
     record: AdRecord,
     status: 'active' | 'inactive' | 'all',
@@ -717,10 +729,11 @@ async function extractAdCards(
         })?.href ?? `https://www.facebook.com/ads/library/?id=${candidate.adId}`;
         const advertiserLink = links.find(isLikelyAdvertiserLink);
         const advertiserPageUrl = advertiserLink ? normalizeFacebookUrl(advertiserLink.href) : null;
-        const advertiserPageId = parsePageIdFromUrl(advertiserPageUrl)
+        const observedAdvertiserPageId = parsePageIdFromUrl(advertiserPageUrl)
             ?? parsePageIdFromUrl(adLibraryLink)
             ?? links.map((link) => parsePageIdFromUrl(link.href)).find(Boolean)
             ?? null;
+        const advertiserPageId = scopedDomPageId(observedAdvertiserPageId, target);
         const imageUrls = uniq(candidate.imageUrls)
             .map((url) => normalizeFacebookUrl(url) ?? url)
             .filter((url) => !url.startsWith('data:') && !/emoji|static.xx.fbcdn.net\/rsrc/i.test(url))

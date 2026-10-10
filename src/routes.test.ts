@@ -8,6 +8,7 @@ import {
     parsePageIdFromUrl,
     recordMatchesRequestedStatus,
     recordMatchesSearchTarget,
+    scopedDomPageId,
 } from './routes.js';
 
 test('extracts ad IDs from library URLs and paths', () => {
@@ -30,6 +31,13 @@ test('parses page IDs from Facebook URLs', () => {
     assert.equal(parsePageIdFromUrl('https://www.facebook.com/ads/library/?view_all_page_id=123456789'), '123456789');
     assert.equal(parsePageIdFromUrl('https://www.facebook.com/profile.php?id=987654321'), '987654321');
     assert.equal(parsePageIdFromUrl('https://www.facebook.com/nike'), null);
+});
+
+test('verified Page ID DOM results can inherit an omitted advertiser ID', () => {
+    assert.equal(scopedDomPageId(null, { kind: 'page', value: '15087023444' }), '15087023444');
+    assert.equal(scopedDomPageId('999999', { kind: 'page', value: '15087023444' }), '999999');
+    assert.equal(scopedDomPageId(null, { kind: 'keyword', value: 'Nike' }), null);
+    assert.equal(scopedDomPageId(null, { kind: 'page', value: 'unsafe' }), null);
 });
 
 test('parses ads from Meta embedded JSON when cards are not rendered', () => {
