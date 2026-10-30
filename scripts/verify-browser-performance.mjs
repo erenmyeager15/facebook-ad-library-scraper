@@ -16,8 +16,14 @@ const png = Buffer.concat([
 ]);
 const font = Buffer.alloc(64 * 1024);
 const video = Buffer.alloc(128 * 1024);
-const imageUrl = (id) => `http://scontent.fixture.fbcdn.net/${id}.jpg`;
-const videoUrl = (id) => `http://video.fixture.fbcdn.net/${id}.mp4`;
+// Reserved test domains avoid real CDN HTTPS policies changing this HTTP-only
+// fixture. Translate only the host suffix of the real production block patterns.
+const fixtureHostPolicy = options => ({ ...options, urlPatterns: options.urlPatterns.map(pattern => {
+    assert.ok(pattern.includes('.fbcdn.net'), 'Fixture must exercise the production CDN policy');
+    return pattern.replaceAll('.fbcdn.net', '.fbcdn.test');
+}) });
+const imageUrl = (id) => `http://scontent.fixture.fbcdn.test/${id}.jpg`;
+const videoUrl = (id) => `http://video.fixture.fbcdn.test/${id}.mp4`;
 const cards = Array.from({ length: 25 }, (_, index) => {
     const id = String(100000000 + index);
     const type = index % 5;
@@ -33,10 +39,10 @@ const cards = Array.from({ length: 25 }, (_, index) => {
         <a href="https://nike.example/${id}">Shop Now</a></article>`;
 }).join('');
 const html = `<!doctype html><html><head>
-    <link rel="stylesheet" href="http://static.fixture.fbcdn.net/style.css">
-    <script defer src="http://static.fixture.fbcdn.net/app.js"></script>
-    </head><body>${cards}<img width="16" height="16" src="http://static.fixture.fbcdn.net/control.svg"></body></html>`;
-const css = `@font-face{font-family:Fixture;src:url('http://static.fixture.fbcdn.net/font.woff2')}
+    <link rel="stylesheet" href="http://static.fixture.fbcdn.test/style.css">
+    <script defer src="http://static.fixture.fbcdn.test/app.js"></script>
+    </head><body>${cards}<img width="16" height="16" src="http://static.fixture.fbcdn.test/control.svg"></body></html>`;
+const css = `@font-face{font-family:Fixture;src:url('http://static.fixture.fbcdn.test/font.woff2')}
     body{font-family:Fixture,Arial}article{width:360px;min-height:280px;margin:16px;padding:12px}
     .background{width:300px;height:180px;background-size:cover}`;
 const publicPayload = { ads: Array.from({ length: 25 }, (_, index) => {
@@ -50,19 +56,19 @@ const js = `for (const img of document.querySelectorAll('.video-preview')) {
     const hydrate = () => {
         if (img.dataset.hydrated) return; img.dataset.hydrated = 'yes';
         const video = document.createElement('video'); video.width = 300; video.height = 180;
-        video.preload = 'auto'; video.src = 'http://video.fixture.fbcdn.net/' + img.dataset.adId + '.mp4';
+        video.preload = 'auto'; video.src = 'http://video.fixture.fbcdn.test/' + img.dataset.adId + '.mp4';
         video.poster = img.src; img.after(video);
     };
     if (img.complete && img.naturalWidth) hydrate(); else img.addEventListener('load', hydrate, {once:true});
 }
-fetch('/fixture-data?creative_url=' + encodeURIComponent('http://scontent.fixture.fbcdn.net/ad.png'))
+fetch('/fixture-data?creative_url=' + encodeURIComponent('http://scontent.fixture.fbcdn.test/ad.png'))
     .then(r=>r.json()).then(data=>{window.fixtureMedia=JSON.stringify(data.payload);window.fixtureReady=data.ok;});`;
 let active;
 const phases = {};
 const server = createServer((req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const local = ['127.0.0.1', 'localhost'].includes(url.hostname);
-    const fixture = ['scontent.fixture.fbcdn.net', 'video.fixture.fbcdn.net', 'static.fixture.fbcdn.net'].includes(url.hostname);
+    const fixture = ['scontent.fixture.fbcdn.test', 'video.fixture.fbcdn.test', 'static.fixture.fbcdn.test'].includes(url.hostname);
     if (!local && !fixture) { res.writeHead(403); res.end(); return; }
     let body;
     let kind;
@@ -101,21 +107,32 @@ try {
     for (const phase of ['baseline', 'aggressive-control', 'optimized']) {
         const context = await browser.newContext();
         const page = await context.newPage();
+        const diagnostics = [];
+        page.on('console', message => { if (message.type() === 'error') diagnostics.push(message.text().slice(0, 700)); });
+        page.on('pageerror', error => diagnostics.push(error.message.slice(0, 700)));
+        page.on('requestfailed', request => diagnostics.push(`${request.url()} ${request.failure()?.errorText}`));
         active = phases[phase] = { bytes: 0, counts: {} };
         if (phase === 'optimized') {
-            await blockMediaDownloads((options) => playwrightUtils.blockRequests(page, options));
+            await blockMediaDownloads((options) => playwrightUtils.blockRequests(page, fixtureHostPolicy(options)));
         } else if (phase === 'aggressive-control') {
             // Preserve the rejected policy as a negative control. Without initial
             // matching data, blocking previews suppresses video DOM hydration.
-            await playwrightUtils.blockRequests(page, { urlPatterns: [
+            await playwrightUtils.blockRequests(page, fixtureHostPolicy({ urlPatterns: [
                 '*://scontent*.fbcdn.net/*', '*://video*.fbcdn.net/*', '*://external*.fbcdn.net/*',
                 '*://*.fbcdn.net/*.woff*', '*://*.fbcdn.net/*.ttf*', '*://*.fbcdn.net/*.otf*',
-            ] });
+            ] }));
         }
         // Two navigations exercise both early blocking and unchanged HTTP cache.
         for (const path of ['warm-up', 'search']) {
             await page.goto(`${origin}/ads/library/${path}?q=Nike`, { waitUntil: 'domcontentloaded', timeout: 15000 });
-            await page.waitForFunction(() => window.fixtureReady === true, { timeout: 10000 });
+            try {
+                await page.waitForFunction(() => window.fixtureReady === true, undefined, { timeout: 10000 });
+            } catch (error) {
+                console.error(JSON.stringify({ fixtureOnly: true, phase, path, diagnostics,
+                    state: await page.evaluate(() => ({ url: location.href, ready: window.fixtureReady,
+                        scripts: Array.from(document.scripts, script => script.src) })), requests: active.counts }));
+                throw error;
+            }
             const pendingPreviews = await page.evaluate(() => Array.from(document.images).filter((image) => !image.complete).length);
             if (pendingPreviews) phases[phase].observedPendingPreviews = true;
             await waitForAdPreviews(page);

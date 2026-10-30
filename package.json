@@ -4,7 +4,7 @@
     "type": "module",
     "description": "Apify Actor that scrapes the public Facebook Ad Library for ad intelligence",
     "engines": {
-        "node": ">=20"
+        "node": ">=24.22.1 <25"
     },
     "main": "dist/main.js",
     "scripts": {
@@ -13,17 +13,20 @@
         "dev": "tsc && node dist/main.js",
         "lint": "tsc --noEmit",
         "typecheck": "tsc --noEmit",
-        "test": "npm run build && node --test dist/*.test.js"
+        "test": "npm run build && node --test dist/*.test.js",
+        "verify:container": "node scripts/verify-container.mjs"
     },
     "dependencies": {
         "apify": "^3.2.0",
         "crawlee": "^3.11.0",
-        "playwright": "^1.60.0"
+        "playwright": "1.64.1"
     },
     "devDependencies": {
         "typescript": "^5.5.0"
     },
     "overrides": {
+        "follow-redirects": "1.16.1",
+        "ip-address": "10.7.4",
         "get-uri": {
             "basic-ftp": "6.2.3"
         }
